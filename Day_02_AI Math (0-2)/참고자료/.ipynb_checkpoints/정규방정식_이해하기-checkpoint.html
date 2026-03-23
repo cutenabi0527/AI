@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>선형회귀_정규방정식</title>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+            background-color: #f9f9f9;
+        }
+        h1, h2 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        .container {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        .visualization {
+            flex: 1;
+            min-width: 500px;
+        }
+        .matrix-steps {
+            flex: 1;
+            min-width: 400px;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        canvas {
+            border: 1px solid #ddd;
+            background-color: #fff;
+            cursor: pointer;
+            border-radius: 8px;
+        }
+        .matrix-container {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .matrix-container:last-child {
+            border-bottom: none;
+        }
+        .matrix-title {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        /* 행렬 계산 과정을 정렬하기 위한 Flexbox 컨테이너 */
+        .matrix-calculation {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .matrix {
+            position: relative; /* 대괄호 위치의 기준점 */
+            display: inline-block;
+            padding: 8px 15px;
+            background-color: #f7f7f7;
+            white-space: pre;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 1.1em;
+            line-height: 1.5;
+            border-radius: 4px;
+        }
+        /* CSS pseudo-elements로 행렬 대괄호 생성 */
+        .matrix::before, .matrix::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 8px;
+            border: 2px solid #555;
+        }
+        .matrix::before {
+            left: 0;
+            border-right: none;
+            border-radius: 6px 0 0 6px;
+        }
+        .matrix::after {
+            right: 0;
+            border-left: none;
+            border-radius: 0 6px 6px 0;
+        }
+        .matrix-op {
+            font-size: 1.6em;
+            font-weight: bold;
+            color: #555;
+        }
+        .button-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 1em;
+            cursor: pointer;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .info {
+            background: #eaf2f8;
+            border-left: 5px solid #3498db;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>정규방정식 📊</h1>
+    <div class="info">
+        <p>
+            선형 회귀($y = \theta_0 + \theta_1 x$)를 **정규방정식** \( \theta = (X^T X)^{-1} X^T y \)을 이용해 푸는 과정을 시각적으로 보여줍니다.<br>
+            아래 그래프를 클릭하여 데이터 포인트를 추가하고, 각 단계에서 행렬이 어떻게 구성되고 계산되는지 확인해보세요.
+        </p>
+    </div>
+
+    <div class="container">
+        <div class="visualization">
+            <h2>데이터 포인트 및 회귀선</h2>
+            <canvas id="plot" width="500" height="500"></canvas>
+            <div class="button-container">
+                <button id="resetBtn">데이터 초기화</button>
+            </div>
+        </div>
+        <div class="matrix-steps">
+            <h2>행렬 계산 과정</h2>
+            <div id="steps-container">
+                <p>그래프에 2개 이상의 점을 추가하면 계산 과정이 표시됩니다.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const canvas = document.getElementById('plot');
+        const ctx = canvas.getContext('2d');
+        const stepsContainer = document.getElementById('steps-container');
+        const resetBtn = document.getElementById('resetBtn');
+
+        let points = [];
+        let theta = null;
+
+        const drawGrid = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = "#f0f0f0";
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 10; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * 50, 0); ctx.lineTo(i * 50, 500);
+                ctx.moveTo(0, i * 50); ctx.lineTo(500, i * 50);
+                ctx.stroke();
+            }
+        };
+
+        const drawAxes = () => {
+            ctx.strokeStyle = "#aaa";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, 250); ctx.lineTo(500, 250); // X-axis
+            ctx.moveTo(250, 0); ctx.lineTo(250, 500); // Y-axis
+            ctx.stroke();
+        };
+
+        const drawPoints = () => {
+            points.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'crimson';
+                ctx.fill();
+            });
+        };
+
+        const drawRegressionLine = () => {
+            if (!theta) return;
+            const [theta0, theta1] = theta;
+            
+            // 수학 좌표계: y_math = theta0 + theta1 * x_math
+            // 캔버스 좌표계: y_canvas = 250 - y_math * 50
+            // 이를 조합하면: y_canvas = 250 - (theta0 + theta1 * x_math) * 50
+            const x_math_start = -5; // 캔버스 x=0 일 때
+            const x_math_end = 5;    // 캔버스 x=500 일 때
+
+            const y1_canvas = 250 - (theta0 + theta1 * x_math_start) * 50;
+            const y2_canvas = 250 - (theta0 + theta1 * x_math_end) * 50;
+            
+            ctx.beginPath();
+            ctx.moveTo(0, y1_canvas);
+            ctx.lineTo(500, y2_canvas);
+            ctx.strokeStyle = '#3498db';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        };
+
+        const redraw = () => {
+            drawGrid();
+            drawAxes();
+            drawPoints();
+            drawRegressionLine();
+        };
+
+        const canvasToMath = (p) => ({
+            x: (p.x - 250) / 50,
+            y: (250 - p.y) / 50,
+        });
+
+        const updateVisualizations = () => {
+            if (points.length < 2) {
+                stepsContainer.innerHTML = '<p>그래프에 2개 이상의 점을 추가하면 계산 과정이 표시됩니다.</p>';
+                theta = null;
+                redraw();
+                return;
+            }
+
+            const mathPoints = points.map(canvasToMath);
+            const m = mathPoints.length;
+
+            let X = mathPoints.map(p => [1, p.x]);
+            let y = mathPoints.map(p => [p.y]);
+            let XT = transpose(X);
+            let XTX = multiply(XT, X);
+            let XTX_inv = invert(XTX);
+            
+            if (!XTX_inv) {
+                stepsContainer.innerHTML = '<p style="color:red;"><b>행렬 계산 불가:</b> 데이터 포인트가 거의 수직선상에 있어 역행렬을 구할 수 없습니다. 다른 위치에 점을 추가해주세요.</p>';
+                theta = null;
+                redraw();
+                return;
+            }
+            
+            let XTX_inv_XT = multiply(XTX_inv, XT);
+            theta = multiply(XTX_inv_XT, y).flat();
+
+            renderMatrices(X, y, XT, XTX, XTX_inv, theta);
+            redraw();
+        };
+
+        const renderMatrices = (X, y, XT, XTX, XTX_inv, theta_vec) => {
+            stepsContainer.innerHTML = `
+                <div class="matrix-container">
+                    <div class="matrix-title">1. 설계 행렬 X, 종속 변수 y</div>
+                    <div class="matrix-calculation">
+                        <span class="matrix-title">\(X = \)</span><span class="matrix">${formatMatrix(X)}</span>
+                        <span class="matrix-title" style="margin-left:20px;">\(y = \)</span><span class="matrix">${formatMatrix(y)}</span>
+                    </div>
+                </div>
+                <div class="matrix-container">
+                    <div class="matrix-title">2. X의 전치 행렬 \(X^T\)</div>
+                    <div class="matrix-calculation">
+                        <span class="matrix-title">\(X^T = \)</span><span class="matrix">${formatMatrix(XT)}</span>
+                    </div>
+                </div>
+                <div class="matrix-container">
+                    <div class="matrix-title">3. \(X^T X\) 계산</div>
+                    <div class="matrix-calculation">
+                        <span class="matrix">${formatMatrix(XT)}</span>
+                        <span class="matrix-op">×</span>
+                        <span class="matrix">${formatMatrix(X)}</span>
+                        <span class="matrix-op">=</span>
+                        <span class="matrix">${formatMatrix(XTX)}</span>
+                    </div>
+                </div>
+                <div class="matrix-container">
+                    <div class="matrix-title">4. \((X^T X)^{-1}\) 계산 (역행렬)</div>
+                     <div class="matrix-calculation">
+                        <span class="matrix-title">\((X^T X)^{-1} = \)</span><span class="matrix">${formatMatrix(XTX_inv)}</span>
+                    </div>
+                </div>
+                <div class="matrix-container">
+                    <div class="matrix-title">5. 최종 계수 \(\theta = (X^T X)^{-1} X^T y\) 계산</div>
+                    <div class="matrix-calculation">
+                         <span class="matrix">${formatMatrix(XTX_inv)}</span>
+                         <span class="matrix-op">×</span>
+                         <span class="matrix">${formatMatrix(XT)}</span>
+                         <span class="matrix-op">×</span>
+                         <span class="matrix">${formatMatrix(y)}</span>
+                         <span class="matrix-op">=</span>
+                         <span class="matrix">${formatMatrix(theta_vec.map(t => [t]))}</span>
+                    </div>
+                    <p style="margin-top: 15px;"><b>결과:</b> \( \\theta_0 \approx ${theta_vec[0].toFixed(3)} \) (y절편), \( \\theta_1 \approx ${theta_vec[1].toFixed(3)} \) (기울기)</p>
+                </div>
+            `;
+            // MathJax에 수식을 다시 렌더링하도록 알림
+            MathJax.typesetPromise();
+        };
+        
+        const formatMatrix = (mat) => {
+            if (!mat) return '[ 계산 불가 ]';
+            return mat.map(row => 
+                row.map(val => val.toFixed(2).padStart(7, ' ')).join(' ')
+            ).join('\n');
+        };
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            points.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            updateVisualizations();
+        });
+
+        resetBtn.addEventListener('click', () => {
+            points = [];
+            theta = null;
+            stepsContainer.innerHTML = '<p>그래프에 2개 이상의 점을 추가하면 계산 과정이 표시됩니다.</p>';
+            redraw();
+        });
+
+        // --- Matrix utility functions ---
+        const transpose = m => m[0].map((_, i) => m.map(row => row[i]));
+        const multiply = (a, b) => {
+            const aNumRows = a.length, aNumCols = a[0].length, bNumCols = b[0].length;
+            const m = new Array(aNumRows);
+            for (let r = 0; r < aNumRows; ++r) {
+                m[r] = new Array(bNumCols).fill(0);
+                for (let c = 0; c < bNumCols; ++c) {
+                    for (let i = 0; i < aNumCols; ++i) {
+                        m[r][c] += a[r][i] * b[i][c];
+                    }
+                }
+            }
+            return m;
+        };
+        const invert = m => {
+            if (m.length !== 2 || m[0].length !== 2) return null; // 2x2 행렬만 지원
+            const [a, b] = m[0];
+            const [c, d] = m[1];
+            const det = a * d - b * c;
+            if (Math.abs(det) < 1e-10) return null; // 행렬식이 0에 가까우면 역행렬 없음
+            return [
+                [d / det, -b / det],
+                [-c / det, a / det]
+            ];
+        };
+
+        // Initial draw
+        redraw();
+    });
+    </script>
+</body>
+</html>

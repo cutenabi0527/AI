@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MLP Shape & Parameter Explorer</title>
+    <!-- Tailwind CDN (utility classes) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 1rem;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      .chip {
+        font-size: 10px;
+        padding: 0.125rem 0.5rem;
+        border-radius: 0.4rem;
+        background: #f1f5f9;
+        color: #334155;
+        border: 1px solid #e2e8f0;
+      }
+      .kbd {
+        border: 1px solid #e2e8f0;
+        padding: 0.125rem 0.25rem;
+        border-radius: 0.375rem;
+        font-size: 11px;
+        background: #f8fafc;
+      }
+      svg text {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial,
+          "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      .sim-neuron {
+        width: 64px;
+        height: 64px;
+        border-radius: 9999px;
+        border: 3px solid;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        transition: 0.2s;
+      }
+      .sim-input {
+        background: #e8f8f5;
+        border-color: #16a34a;
+      }
+      .sim-hidden {
+        background: #ebf5fb;
+        border-color: #2563eb;
+      }
+      .sim-output {
+        background: #fdedec;
+        border-color: #ef4444;
+      }
+      .sim-neuron.active {
+        transform: scale(1.08);
+        box-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
+      }
+      #sim-svg .edge {
+        stroke: #cbd5e1;
+        stroke-width: 3;
+      }
+      #sim-svg .edge.active {
+        stroke: #f59e0b;
+        stroke-width: 5;
+      }
+      #sim-svg .wlabel {
+        font-size: 12px;
+        fill: #334155;
+      }
+      #sim-svg .glabel {
+        font-size: 11px;
+        fill: #ef4444;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <header
+      class="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-slate-200"
+    >
+      <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+        <h1 class="text-lg font-semibold">MLP Shape & Parameter Explorer</h1>
+        <span class="chip"
+          >입력→은닉→출력 차원 변화 · 파라미터 · 메모리(고정 FP32) · FLOPs</span
+        >
+        <div class="ml-auto flex items-center gap-2 text-sm">
+          <button
+            id="btnShare"
+            class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50"
+          >
+            구성 내보내기
+          </button>
+          <button
+            id="btnReset"
+            class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50"
+          >
+            초기화
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6 grid grid-cols-12 gap-6">
+      <!-- Controls -->
+      <section class="col-span-12 lg:col-span-4 card p-4 space-y-4">
+        <h2 class="font-semibold">구성</h2>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <label class="space-y-1 col-span-1">
+            <div class="text-slate-600">배치 크기 B</div>
+            <input
+              id="batch"
+              type="number"
+              min="1"
+              value="32"
+              class="w-full border rounded-xl px-3 py-2"
+            />
+          </label>
+          <label class="space-y-1 col-span-1">
+            <div class="text-slate-600">입력 차원 D<sub>in</sub></div>
+            <input
+              id="din"
+              type="number"
+              min="1"
+              value="10"
+              class="w-full border rounded-xl px-3 py-2"
+            />
+          </label>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium">레이어</h3>
+          <div class="flex gap-2">
+            <button
+              id="addLinear"
+              class="text-xs px-2 py-1 rounded-lg border bg-white hover:bg-slate-50"
+            >
+              Linear 추가
+            </button>
+            <button
+              id="addAct"
+              class="text-xs px-2 py-1 rounded-lg border bg-white hover:bg-slate-50"
+            >
+              활성화 추가
+            </button>
+          </div>
+        </div>
+
+        <div id="layers" class="space-y-2"></div>
+
+        <template id="tpl-linear">
+          <div class="layer card p-3" data-type="linear">
+            <div class="flex items-center justify-between">
+              <div class="font-medium">Linear</div>
+              <div class="flex items-center gap-2">
+                <label class="text-xs flex items-center gap-1"
+                  ><input
+                    type="checkbox"
+                    class="bias accent-slate-700"
+                    checked
+                  />
+                  bias</label
+                >
+                <button
+                  class="del text-xs px-2 py-1 rounded-lg border hover:bg-slate-50"
+                >
+                  삭제
+                </button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-2 text-sm">
+              <label class="space-y-1 col-span-2">
+                <div class="text-slate-600">출력 차원 D<sub>out</sub></div>
+                <input
+                  type="number"
+                  class="dout w-full border rounded-xl px-3 py-2"
+                  min="1"
+                  value="5"
+                />
+              </label>
+            </div>
+            <div class="text-xs text-slate-500 mt-2">
+              파라미터: D<sub>in</sub>×D<sub>out</sub> + (bias?
+              D<sub>out</sub>:0)
+            </div>
+          </div>
+        </template>
+
+        <template id="tpl-act">
+          <div class="layer card p-3" data-type="act">
+            <div class="flex items-center justify-between">
+              <div class="font-medium">Activation</div>
+              <button
+                class="del text-xs px-2 py-1 rounded-lg border hover:bg-slate-50"
+              >
+                삭제
+              </button>
+            </div>
+            <div class="mt-2 text-sm">
+              <label class="space-y-1 block">
+                <div class="text-slate-600">활성화 함수</div>
+                <select class="act w-full border rounded-xl px-3 py-2">
+                  <option value="ReLU">ReLU</option>
+                  <option value="Sigmoid">Sigmoid</option>
+                </select>
+              </label>
+            </div>
+            <div class="text-xs text-slate-500 mt-2">
+              파라미터 없음 · 형상 유지
+            </div>
+          </div>
+        </template>
+
+        <div class="text-xs text-slate-500">
+          단축키: <span class="kbd">L</span> Linear,
+          <span class="kbd">A</span> Activation
+        </div>
+      </section>
+
+      <!-- Visualization & Tables -->
+      <section class="col-span-12 lg:col-span-8 space-y-4">
+        <!-- Node-level layer graph card -->
+        <div class="card p-4">
+          <div class="flex items-center justify-between">
+            <h2 class="font-semibold mb-3">MLP 레이어 그래프 (노드 수준)</h2>
+            <div class="flex items-center gap-3 text-sm">
+              <label class="flex items-center gap-2">
+                <span class="text-slate-600">노드 최대표시</span>
+                <input
+                  id="maxNodes"
+                  type="number"
+                  min="3"
+                  max="24"
+                  value="12"
+                  class="w-20 border rounded-xl px-2 py-1"
+                />
+              </label>
+              <label class="flex items-center gap-2">
+                <span class="text-slate-600">엣지 샘플링(%)</span>
+                <input
+                  id="edgeSample"
+                  type="number"
+                  min="5"
+                  max="100"
+                  step="5"
+                  value="100"
+                  class="w-20 border rounded-xl px-2 py-1"
+                />
+              </label>
+            </div>
+          </div>
+          <div id="graph" class="overflow-x-auto"></div>
+          <div class="mt-2 text-xs text-slate-600">
+            ※ 차원이 매우 큰 경우 학습용으로 축약 표시합니다(노드 수 축소, 엣지
+            샘플링). 각 열은 레이어(입력/은닉/출력)를 나타냅니다.
+          </div>
+        </div>
+
+        <!-- Tables -->
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div class="card p-4">
+            <h3 class="font-semibold mb-2">레이어별 형상 요약</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-left text-slate-500">
+                  <tr>
+                    <th class="py-1">#</th>
+                    <th class="py-1">레이어</th>
+                    <th class="py-1">입력 형상</th>
+                    <th class="py-1">출력 형상</th>
+                  </tr>
+                </thead>
+                <tbody id="shapeTbody" class="align-top"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card p-4">
+            <h3 class="font-semibold mb-2">파라미터 / 메모리 / FLOPs</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-left text-slate-500">
+                  <tr>
+                    <th class="py-1">#</th>
+                    <th class="py-1">레이어</th>
+                    <th class="py-1">파라미터 수</th>
+                    <th class="py-1">가중치 메모리</th>
+                    <th class="py-1">FLOPs (fwd)</th>
+                  </tr>
+                </thead>
+                <tbody id="paramTbody" class="align-top"></tbody>
+                <tfoot>
+                  <tr class="border-t">
+                    <td></td>
+                    <td class="py-2 font-medium">합계</td>
+                    <td
+                      id="sumParams"
+                      data-testid="sumParams"
+                      class="py-2 num"
+                    ></td>
+                    <td id="sumMem" data-testid="sumMem" class="py-2 num"></td>
+                    <td
+                      id="sumFlops"
+                      data-testid="sumFlops"
+                      class="py-2 num"
+                    ></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-4">
+          <h3 class="font-semibold mb-2">설명</h3>
+          <div id="narrative" class="text-sm text-slate-700 leading-6"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer
+      class="border-t border-slate-200 py-6 text-center text-xs text-slate-500"
+    >
+      교육용 휴리스틱 계산기 — 실측과 약간의 오차가 있을 수 있습니다 (특히 FLOPs
+      정의).
+    </footer>
+
+    <script>
+      (function () {
+        const $ = (s, r = document) => r.querySelector(s);
+        const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+        const safe = (sel) => document.querySelector(sel);
+        const setText = (sel, text) => {
+          const el = safe(sel);
+          if (el) el.textContent = text;
+          else console.warn("Missing node for", sel);
+        };
+
+        const state = {
+          B: 32,
+          Din: 10,
+          layers: [
+            { type: "linear", Dout: 5, bias: true },
+            { type: "act", name: "ReLU" },
+            { type: "linear", Dout: 4, bias: true },
+            { type: "act", name: "ReLU" },
+            { type: "linear", Dout: 10, bias: true },
+          ],
+        };
+
+        let lastRowsShape = [];
+
+        const BYTES_PER_PARAM = 4; // FP32 fixed
+        const numFmt = (n) => {
+          if (n === 0) return "0";
+          const a = Math.abs(n);
+          if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+          if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+          if (a >= 1e3) return (n / 1e3).toFixed(2) + "k";
+          return String(n);
+        };
+        const bytesFmt = (b) => {
+          const u = ["B", "KB", "MB", "GB"];
+          let i = 0,
+            v = b;
+          while (v > 1024 && i < u.length - 1) {
+            v /= 1024;
+            i++;
+          }
+          return v.toFixed(2) + " " + u[i];
+        };
+        // ===== Random helpers & graph parameter cache (for tooltips) =====
+        const randn = (() => {
+          // Box–Muller
+          let spare = null;
+          return () => {
+            if (spare !== null) {
+              const v = spare;
+              spare = null;
+              return v;
+            }
+            let u = 0,
+              v = 0,
+              s = 0;
+            do {
+              u = Math.random() * 2 - 1;
+              v = Math.random() * 2 - 1;
+              s = u * u + v * v;
+            } while (s === 0 || s >= 1);
+            const m = Math.sqrt((-2 * Math.log(s)) / s);
+            spare = v * m;
+            return u * m;
+          };
+        })();
+
+        // biases[col][j] (col 0은 입력 → bias 없음), weights[col][li][ri] (col i → i+1)
+        let graphParams = { biases: [], weights: [] };
+
+        function initGraphParams(disp) {
+          graphParams.biases = disp.map((n, col) =>
+            col === 0 ? null : Array.from({ length: n }, () => randn() * 0.5)
+          );
+          graphParams.weights = [];
+          for (let i = 0; i < disp.length - 1; i++) {
+            const L = disp[i],
+              R = disp[i + 1];
+            const mat = Array.from({ length: L }, () =>
+              Array.from({ length: R }, () => randn() * 0.5)
+            );
+            graphParams.weights.push(mat);
+          }
+        }
+        function computeRows() {
+          const rowsShape = [];
+          const rowsParam = [];
+          let cur = { B: state.B, D: state.Din };
+          let totalParams = 0,
+            totalBytes = 0,
+            totalFlops = 0;
+
+          state.layers.forEach((L, idx) => {
+            const rowS = {
+              idx: idx + 1,
+              name: "",
+              in: `(${cur.B}×${cur.D})`,
+              out: "",
+              type: L.type,
+            };
+            const rowP = {
+              idx: idx + 1,
+              name: "",
+              params: 0,
+              bytes: 0,
+              flops: 0,
+            };
+
+            if (L.type === "linear") {
+              rowS.name = `Linear(${cur.D}→${L.Dout})`;
+              const params = cur.D * L.Dout + (L.bias ? L.Dout : 0);
+              const bytes = params * BYTES_PER_PARAM;
+              const flops = state.B * cur.D * L.Dout * 2; // mul+add
+              rowS.out = `(${cur.B}×${L.Dout})`;
+              rowP.name = rowS.name;
+              rowP.params = params;
+              rowP.bytes = bytes;
+              rowP.flops = flops;
+              totalParams += params;
+              totalBytes += bytes;
+              totalFlops += flops;
+              cur = { B: cur.B, D: L.Dout };
+            } else if (L.type === "act") {
+              // 선택 가능: ReLU 또는 Sigmoid, 파라미터 없음
+              rowS.name = L.name || "Activation";
+              rowS.out = `(${cur.B}×${cur.D})`;
+              rowP.name = rowS.name;
+            }
+            rowsShape.push(rowS);
+            rowsParam.push(rowP);
+          });
+          return { rowsShape, rowsParam, totalParams, totalBytes, totalFlops };
+        }
+
+        function recalc() {
+          const bEl = safe("#batch");
+          const dEl = safe("#din");
+          if (bEl) state.B = parseInt(bEl.value || 1);
+          if (dEl) state.Din = parseInt(dEl.value || 1);
+
+          const { rowsShape, rowsParam, totalParams, totalBytes, totalFlops } =
+            computeRows();
+          lastRowsShape = rowsShape;
+          renderTables(
+            rowsShape,
+            rowsParam,
+            totalParams,
+            totalBytes,
+            totalFlops
+          );
+          renderNarrative(rowsShape, totalParams, totalBytes, totalFlops);
+          renderGraph(computeDimsFromState(), rowsShape);
+        }
+
+        function renderTables(
+          rowsShape,
+          rowsParam,
+          totalParams,
+          totalBytes,
+          totalFlops
+        ) {
+          const tbS = safe("#shapeTbody");
+          if (!tbS) {
+            console.warn("shapeTbody missing");
+            return;
+          }
+          tbS.innerHTML = "";
+          rowsShape.forEach((r) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td class="py-1 pr-3 text-slate-500">${r.idx}</td>
+        <td class="py-1 pr-3">${r.name}</td>
+        <td class="py-1 pr-3 font-mono">${r.in}</td>
+        <td class="py-1 pr-3 font-mono">${r.out}</td>`;
+            tbS.appendChild(tr);
+          });
+
+          const tbP = safe("#paramTbody");
+          if (!tbP) {
+            console.warn("paramTbody missing");
+            return;
+          }
+          tbP.innerHTML = "";
+          rowsParam.forEach((r) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td class="py-1 pr-3 text-slate-500">${r.idx}</td>
+        <td class="py-1 pr-3">${r.name}</td>
+        <td class="py-1 pr-3 num">${numFmt(r.params)}</td>
+        <td class="py-1 pr-3 num">${r.bytes ? bytesFmt(r.bytes) : "-"}</td>
+        <td class="py-1 pr-3 num">${r.flops ? numFmt(r.flops) : "-"}</td>`;
+            tbP.appendChild(tr);
+          });
+          setText("#sumParams", numFmt(totalParams));
+          setText("#sumMem", bytesFmt(totalBytes));
+          setText("#sumFlops", numFmt(totalFlops));
+        }
+
+        function renderNarrative(
+          rowsShape,
+          totalParams,
+          totalBytes,
+          totalFlops
+        ) {
+          const B = state.B,
+            Din = state.Din;
+          let s = `배치 ${B}개 입력에서 시작합니다. 최초 형상은 (B×D_in)=(${B}×${Din}) 입니다. `;
+          const linears = state.layers.filter((L) => L.type === "linear");
+          if (linears.length) {
+            const dims = [Din, ...linears.map((L) => L.Dout)];
+            s += `선형 계층을 따라 차원은 ${dims
+              .slice(0, -1)
+              .map((d, i) => `${d}→${dims[i + 1]}`)
+              .join(" → ")} 로 변합니다. `;
+          }
+          s += `전체 파라미터는 ${numFmt(
+            totalParams
+          )}개이며, FP32 기준 가중치 메모리는 약 ${bytesFmt(
+            totalBytes
+          )} 입니다. `;
+          s += `추정 순방향 FLOPs는 ${numFmt(
+            totalFlops
+          )} 입니다 (Linear의 multiply-add를 2 FLOPs로 계산).`;
+          const n = safe("#narrative");
+          if (n) n.textContent = s;
+          else console.warn("narrative missing");
+        }
+
+        function computeDimsFromState() {
+          const dims = [state.Din];
+          state.layers.forEach((L) => {
+            if (L.type === "linear") dims.push(L.Dout);
+          });
+          return dims;
+        }
+
+        function renderGraph(dims, rowsShape) {
+          const holder = safe("#graph");
+          if (!holder) {
+            console.warn("graph missing");
+            return;
+          }
+          holder.innerHTML = "";
+
+          const maxNodesEl = safe("#maxNodes");
+          const edgeEl = safe("#edgeSample");
+          const maxNodes = Math.max(
+            3,
+            Math.min(24, parseInt(maxNodesEl ? maxNodesEl.value : 12))
+          );
+          const edgeSamplePct = Math.max(
+            5,
+            Math.min(100, parseInt(edgeEl ? edgeEl.value : 100))
+          );
+
+          // 실제 차원을 maxNodes 안으로 축약 표시
+          const disp = dims.map((d) => {
+            if (d <= maxNodes) return d;
+            const scaled = Math.max(
+              3,
+              Math.round(d / (Math.max(...dims) / maxNodes))
+            );
+            return Math.min(maxNodes, scaled);
+          });
+
+          // disp 구성이 바뀔 때만 파라미터 재시드(엣지 샘플만 조정하면 값 유지)
+          if (!window.__prevDispKey) window.__prevDispKey = null;
+          const dispKey = JSON.stringify(disp);
+          if (dispKey !== window.__prevDispKey) {
+            initGraphParams(disp);
+            window.__prevDispKey = dispKey;
+          }
+
+          const svgNS = "http://www.w3.org/2000/svg";
+          const L = disp.length;
+          const nodeGapX = 140;
+          const padX = 40;
+          const padY = 24;
+          const nodeR = 8;
+          const colHeights = disp.map((n) => (n - 1) * 34 + 2 * padY);
+          const H = Math.max(220, Math.max(...colHeights) + 20);
+          const W = padX * 2 + (L - 1) * nodeGapX + 200;
+          const svg = document.createElementNS(svgNS, "svg");
+          svg.setAttribute("width", W);
+          svg.setAttribute("height", H);
+          svg.classList.add("border", "rounded-xl", "bg-white");
+
+          // 노드 좌표
+          const cols = [];
+          for (let i = 0; i < L; i++) {
+            const cx = padX + i * nodeGapX + 40;
+            const n = disp[i];
+            const top = (H - (n - 1) * 34) / 2;
+            const nodes = [];
+            for (let j = 0; j < n; j++) {
+              nodes.push({ x: cx, y: top + j * 34 });
+            }
+            cols.push(nodes);
+          }
+
+          // 간선(곡선) + 가중치 툴팁
+          for (let i = 0; i < L - 1; i++) {
+            const left = cols[i],
+              right = cols[i + 1];
+            for (let li = 0; li < left.length; li++) {
+              for (let ri = 0; ri < right.length; ri++) {
+                if (Math.random() * 100 > edgeSamplePct) continue;
+                const a = left[li],
+                  b = right[ri];
+                const path = document.createElementNS(svgNS, "path");
+                const midx = (a.x + b.x) / 2;
+                const d = `M ${a.x + nodeR} ${a.y} C ${midx} ${a.y}, ${midx} ${
+                  b.y
+                }, ${b.x - nodeR} ${b.y}`;
+                path.setAttribute("d", d);
+                path.setAttribute("fill", "none");
+                path.setAttribute("stroke", "#cbd5e1");
+                path.setAttribute("stroke-width", "1");
+                path.classList.add("edge");
+
+                const wVal =
+                  graphParams.weights[i] && graphParams.weights[i][li]
+                    ? graphParams.weights[i][li][ri]
+                    : null;
+                const title = document.createElementNS(svgNS, "title");
+                title.textContent =
+                  wVal === null || wVal === undefined
+                    ? `w(${i}:${li}→${i + 1}:${ri})`
+                    : `w(${i}:${li}→${i + 1}:${ri}) = ${wVal.toFixed(4)}`;
+                path.appendChild(title);
+
+                svg.appendChild(path);
+              }
+            }
+          }
+
+          // 노드 + 편향 툴팁
+          for (let i = 0; i < L; i++) {
+            for (let j = 0; j < cols[i].length; j++) {
+              const p = cols[i][j];
+              const c = document.createElementNS(svgNS, "circle");
+              c.setAttribute("cx", p.x);
+              c.setAttribute("cy", p.y);
+              c.setAttribute("r", nodeR);
+              c.setAttribute(
+                "fill",
+                i === 0 ? "#e2e8f0" : i === L - 1 ? "#fde68a" : "#bfdbfe"
+              );
+              c.setAttribute("stroke", "#64748b");
+              c.setAttribute("stroke-width", "1");
+
+              const title = document.createElementNS(svgNS, "title");
+              if (i === 0) {
+                title.textContent = `입력 노드 (${i}:${j})`;
+              } else {
+                const bVal = graphParams.biases[i]
+                  ? graphParams.biases[i][j]
+                  : null;
+                title.textContent =
+                  bVal === null || bVal === undefined
+                    ? `b(${i}:${j})`
+                    : `b(${i}:${j}) = ${bVal.toFixed(4)}`;
+              }
+              c.appendChild(title);
+
+              svg.appendChild(c);
+            }
+          }
+
+          // 열 제목
+          const titles = [
+            "입력",
+            ...rowsShape.map((r) => r.name.split("(")[0]),
+          ];
+          for (let i = 0; i < L; i++) {
+            const tx = document.createElementNS(svgNS, "text");
+            tx.setAttribute("x", cols[i][0].x - 20);
+            tx.setAttribute("y", 20);
+            tx.setAttribute("font-size", "12");
+            tx.setAttribute("fill", "#334155");
+            tx.textContent = `${titles[i] || ""}  (≈ ${dims[i]})`;
+            svg.appendChild(tx);
+          }
+
+          const legend = document.createElementNS(svgNS, "text");
+          legend.setAttribute("x", 10);
+          legend.setAttribute("y", H - 8);
+          legend.setAttribute("font-size", "11");
+          legend.setAttribute("fill", "#64748b");
+          legend.textContent =
+            "원: 노드(hover → bias) · 곡선: 연결(hover → weight) · 상단 괄호 안은 실제 차원 근사치";
+          svg.appendChild(legend);
+
+          holder.appendChild(svg);
+        }
+        // Editors
+        function renderLayerEditors() {
+          const root = safe("#layers");
+          if (!root) {
+            console.warn("layers root missing");
+            return;
+          }
+          root.innerHTML = "";
+          state.layers.forEach((L, idx) => {
+            let node;
+            if (L.type === "linear") {
+              node = $("#tpl-linear").content.firstElementChild.cloneNode(true);
+              node.querySelector(".dout").value = L.Dout;
+              node.querySelector(".bias").checked = !!L.bias;
+              node.querySelector(".dout").addEventListener("input", (e) => {
+                L.Dout = parseInt(e.target.value || 1);
+                recalc();
+              });
+              node.querySelector(".bias").addEventListener("change", (e) => {
+                L.bias = e.target.checked;
+                recalc();
+              });
+            } else if (L.type === "act") {
+              node = $("#tpl-act").content.firstElementChild.cloneNode(true);
+              const sel = node.querySelector(".act");
+              sel.value = L.name || "ReLU";
+              sel.addEventListener("change", (e) => {
+                L.name = e.target.value;
+                recalc();
+              });
+            }
+            node.querySelector(".del").addEventListener("click", () => {
+              state.layers.splice(idx, 1);
+              renderLayerEditors();
+              recalc();
+            });
+            root.appendChild(node);
+          });
+        }
+
+        // Wire UI (safe guards)
+        function wire() {
+          const elB = safe("#batch");
+          if (elB) elB.addEventListener("input", recalc);
+          const elD = safe("#din");
+          if (elD) elD.addEventListener("input", recalc);
+          const addL = safe("#addLinear");
+          if (addL)
+            addL.addEventListener("click", () => {
+              state.layers.push({ type: "linear", Dout: 5, bias: true });
+              renderLayerEditors();
+              recalc();
+            });
+          const addA = safe("#addAct");
+          if (addA)
+            addA.addEventListener("click", () => {
+              state.layers.push({ type: "act", name: "ReLU" });
+              renderLayerEditors();
+              recalc();
+            });
+          window.addEventListener("keydown", (e) => {
+            if (
+              e.target.tagName === "INPUT" ||
+              e.target.tagName === "SELECT" ||
+              e.metaKey ||
+              e.ctrlKey
+            )
+              return;
+            if (e.key === "l" || e.key === "L") {
+              addL?.click();
+            }
+            if (e.key === "a" || e.key === "A") {
+              addA?.click();
+            }
+          });
+          window.addEventListener("change", (e) => {
+            if (
+              e.target &&
+              (e.target.id === "maxNodes" || e.target.id === "edgeSample")
+            ) {
+              renderGraph(computeDimsFromState(), lastRowsShape);
+            }
+          });
+
+          const reset = safe("#btnReset");
+          if (reset)
+            reset.addEventListener("click", () => {
+              state.B = 32;
+              state.Din = 10;
+              state.layers = [
+                { type: "linear", Dout: 5, bias: true },
+                { type: "act", name: "ReLU" },
+                { type: "linear", Dout: 4, bias: true },
+                { type: "act", name: "ReLU" },
+                { type: "linear", Dout: 10, bias: true },
+              ];
+              if (elB) elB.value = state.B;
+              if (elD) elD.value = state.Din;
+              renderLayerEditors();
+              recalc();
+            });
+
+          const share = safe("#btnShare");
+          if (share)
+            share.addEventListener("click", () => {
+              const payload = {
+                B: state.B,
+                Din: state.Din,
+                layers: state.layers,
+              };
+              const text = JSON.stringify(payload, null, 2);
+              navigator.clipboard
+                ?.writeText(text)
+                .then(() => {
+                  alert(
+                    "구성을 클립보드에 복사했습니다. JSON으로 저장/붙여넣기 하세요."
+                  );
+                })
+                .catch(() => {
+                  prompt("아래 JSON을 복사하세요", text);
+                });
+            });
+        }
+
+        // --- Lightweight tests ---
+        function runTests() {
+          const results = [];
+          const log = (name, pass, info = "") => {
+            results.push({ name, pass, info });
+            console[pass ? "log" : "error"](
+              `[TEST] ${pass ? "✅" : "❌"} ${name} ${info}`
+            );
+          };
+
+          // Test 1: Default totals numeric check
+          const t1 = computeRows();
+          const expectParams = 10 * 5 + 5 + 5 * 4 + 4 + 4 * 10 + 10;
+          log(
+            "Default params numeric",
+            t1.totalParams === expectParams,
+            `got=${t1.totalParams}, expect=${expectParams}`
+          );
+
+          recalc();
+          const sumP = safe("#sumParams");
+          const sumM = safe("#sumMem");
+          const sumF = safe("#sumFlops");
+          log("Summary cells present", !!(sumP && sumM && sumF));
+
+          // Test 2: No linear layers → totals 0, graph still exists
+          const backup = JSON.parse(JSON.stringify(state));
+          state.layers = [{ type: "act", name: "ReLU" }];
+          recalc();
+          const t2 = computeRows();
+          log(
+            "No-linear totals zero",
+            t2.totalParams === 0 && t2.totalBytes === 0 && t2.totalFlops === 0
+          );
+          const graph = safe("#graph");
+          log("Graph element present", !!graph);
+
+          // Test 3: Adding a linear layer increases params by Din_last*Dout + bias
+          Object.assign(state, backup);
+          const before = computeRows();
+          const lastDim = computeDimsFromState().slice(-1)[0];
+          const addOut = 3;
+          const addBias = true;
+          state.layers.push({ type: "linear", Dout: addOut, bias: addBias });
+          const after = computeRows();
+          const delta = after.totalParams - before.totalParams;
+          const expectDelta = lastDim * addOut + (addBias ? addOut : 0);
+          log(
+            "Add-linear delta params",
+            delta === expectDelta,
+            `delta=${delta}, expect=${expectDelta}`
+          );
+          state.layers.pop();
+
+          // Restore
+          Object.assign(state, backup);
+          recalc();
+
+          // Test 4: Edge sampling default should be 100
+          const edgeInput = safe("#edgeSample");
+          log(
+            "Edge sample default 100",
+            edgeInput && String(edgeInput.value) === "100",
+            edgeInput ? `value=${edgeInput.value}` : "no input"
+          );
+
+          // Test 5: Switching activation (ReLU↔Sigmoid) keeps params and shapes the same
+          const beforeRows = computeRows();
+          const actIdx = state.layers.findIndex((l) => l.type === "act");
+          if (actIdx >= 0) {
+            const prevName = state.layers[actIdx].name;
+            state.layers[actIdx].name =
+              prevName === "ReLU" ? "Sigmoid" : "ReLU";
+            const afterRows = computeRows();
+            const sameTotals =
+              beforeRows.totalParams === afterRows.totalParams &&
+              beforeRows.totalBytes === afterRows.totalBytes &&
+              beforeRows.totalFlops === afterRows.totalFlops;
+            log("Activation switch keeps totals", sameTotals);
+            state.layers[actIdx].name = prevName; // restore
+          } else {
+            log(
+              "Activation exists for switch test",
+              false,
+              "no activation layer"
+            );
+          }
+
+          // Test 6: Table rows should equal number of layers
+          const bodyRowsShape =
+            safe("#shapeTbody")?.querySelectorAll("tr")?.length || 0;
+          const bodyRowsParam =
+            safe("#paramTbody")?.querySelectorAll("tr")?.length || 0;
+          log(
+            "Shape rows == layers",
+            bodyRowsShape === state.layers.length,
+            `rows=${bodyRowsShape}, layers=${state.layers.length}`
+          );
+          log(
+            "Param rows == layers",
+            bodyRowsParam === state.layers.length,
+            `rows=${bodyRowsParam}, layers=${state.layers.length}`
+          );
+
+          console.table(results);
+        }
+
+        window.addEventListener("DOMContentLoaded", () => {
+          renderLayerEditors();
+          wire();
+          recalc();
+          runTests();
+          // mini-sim init
+          simInit();
+          const det = document.getElementById("sim-details");
+          if (det) {
+            det.addEventListener("toggle", () => {
+              if (det.open && window.simRedraw) {
+                window.simRedraw();
+              }
+            });
+          }
+        });
+      })();
+
+      // ===== Mini-simulator implementation (2-2-1) =====
+      (function () {
+        const $ = (s, r = document) => r.querySelector(s);
+        const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+        const posCache = {};
+        const iv = {}; // initial values
+        const S = { ready: false };
+
+        const ids = [
+          "sim-x1-in",
+          "sim-x2-in",
+          "sim-w1",
+          "sim-w2",
+          "sim-w3",
+          "sim-w4",
+          "sim-w5",
+          "sim-w6",
+          "sim-b1",
+          "sim-b2",
+          "sim-y",
+          "sim-lr",
+        ];
+        function vals() {
+          const o = {};
+          ids.forEach((id) => {
+            const el = $("#" + id);
+            o[id] = parseFloat(el.value);
+          });
+          return o;
+        }
+        function center(el) {
+          if (posCache[el.id]) return posCache[el.id];
+          const r = el.getBoundingClientRect();
+          const c = $("#sim-network").getBoundingClientRect();
+          const p = {
+            x: r.left - c.left + r.width / 2,
+            y: r.top - c.top + r.height / 2,
+          };
+          posCache[el.id] = p;
+          return p;
+        }
+        function clearPos() {
+          for (const k in posCache) delete posCache[k];
+        }
+
+        function draw() {
+          const svg = $("#sim-svg");
+          if (!svg) return;
+          svg.innerHTML = "";
+          const con = [
+            ["sim-x1", "sim-h1", "sim-w1"],
+            ["sim-x1", "sim-h2", "sim-w3"],
+            ["sim-x2", "sim-h1", "sim-w2"],
+            ["sim-x2", "sim-h2", "sim-w4"],
+            ["sim-h1", "sim-o1", "sim-w5"],
+            ["sim-h2", "sim-o1", "sim-w6"],
+          ];
+          con.forEach(([a, b, w]) => {
+            const p1 = center($("#" + a)),
+              p2 = center($("#" + b));
+            const line = document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              "line"
+            );
+            line.setAttribute("x1", p1.x);
+            line.setAttribute("y1", p1.y);
+            line.setAttribute("x2", p2.x);
+            line.setAttribute("y2", p2.y);
+            line.classList.add("edge");
+            line.id = `edge-${a}-${b}`;
+            svg.appendChild(line);
+            const wt = document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              "text"
+            );
+            wt.setAttribute("x", (p1.x + p2.x) / 2 - 18);
+            wt.setAttribute("y", (p1.y + p2.y) / 2 - 8);
+            wt.textContent = `${$("#" + w).value}`;
+            wt.classList.add("wlabel");
+            wt.id = `wlabel-${w}`;
+            svg.appendChild(wt);
+            const gt = document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              "text"
+            );
+            gt.setAttribute("x", (p1.x + p2.x) / 2 - 18);
+            gt.setAttribute("y", (p1.y + p2.y) / 2 + 14);
+            gt.textContent = "";
+            gt.classList.add("glabel");
+            gt.id = `glabel-${w}`;
+            svg.appendChild(gt);
+          });
+        }
+
+        function setVal(id, v, pre = "a") {
+          $("#" + id + " .val").textContent = `${pre}=${
+            Number.isFinite(v) ? v.toFixed(4) : ""
+          }`;
+          $("#" + id).classList.add("active");
+        }
+        const sig = (x) => 1 / (1 + Math.exp(-x));
+
+        function forward() {
+          const v = vals();
+          S.z_h1 =
+            v["sim-w1"] * v["sim-x1-in"] +
+            v["sim-w2"] * v["sim-x2-in"] +
+            v["sim-b1"];
+          S.a_h1 = sig(S.z_h1);
+          S.z_h2 =
+            v["sim-w3"] * v["sim-x1-in"] +
+            v["sim-w4"] * v["sim-x2-in"] +
+            v["sim-b1"];
+          S.a_h2 = sig(S.z_h2);
+          S.z_o1 = v["sim-w5"] * S.a_h1 + v["sim-w6"] * S.a_h2 + v["sim-b2"];
+          S.y_pred = sig(S.z_o1);
+          S.loss = 0.5 * Math.pow(v["sim-y"] - S.y_pred, 2);
+
+          setVal("sim-h1", S.a_h1);
+          setVal("sim-h2", S.a_h2);
+          setVal("sim-o1", S.y_pred, "y");
+          $$("#sim-svg .edge").forEach((e) => e.classList.add("active"));
+          $("#sim-log").innerHTML = `
+      <div class="font-medium">1) 순전파</div>
+      <div class="mt-2">z_h1=${S.z_h1.toFixed(4)}, a_h1=${S.a_h1.toFixed(
+            4
+          )}<br>z_h2=${S.z_h2.toFixed(4)}, a_h2=${S.a_h2.toFixed(
+            4
+          )}<br>z_o1=${S.z_o1.toFixed(4)}, y_pred=${S.y_pred.toFixed(
+            4
+          )}<br>Loss=${S.loss.toFixed(8)}</div>`;
+          $("#sim-forward").disabled = true;
+          $("#sim-backward").disabled = false;
+          $("#sim-update").disabled = true;
+        }
+
+        function backward() {
+          const v = vals();
+          const dL_dy = S.y_pred - v["sim-y"];
+          const dy_dz = S.y_pred * (1 - S.y_pred);
+          const dL_dzo = dL_dy * dy_dz;
+          S.g_w5 = dL_dzo * S.a_h1;
+          S.g_w6 = dL_dzo * S.a_h2;
+          const dL_dah1 = dL_dzo * v["sim-w5"];
+          const dL_dah2 = dL_dzo * v["sim-w6"];
+          const dah1_dzh1 = S.a_h1 * (1 - S.a_h1);
+          const dah2_dzh2 = S.a_h2 * (1 - S.a_h2);
+          S.g_w1 = dL_dah1 * dah1_dzh1 * v["sim-x1-in"];
+          S.g_w2 = dL_dah1 * dah1_dzh1 * v["sim-x2-in"];
+          S.g_w3 = dL_dah2 * dah2_dzh2 * v["sim-x1-in"];
+          S.g_w4 = dL_dah2 * dah2_dzh2 * v["sim-x2-in"];
+
+          [
+            ["sim-w1", "g_w1"],
+            ["sim-w2", "g_w2"],
+            ["sim-w3", "g_w3"],
+            ["sim-w4", "g_w4"],
+            ["sim-w5", "g_w5"],
+            ["sim-w6", "g_w6"],
+          ].forEach(([w, g]) => {
+            $("#glabel-" + w).textContent = `∂L/∂${w.slice(4)}=${S[g].toFixed(
+              4
+            )}`;
+          });
+          $(
+            "#sim-log"
+          ).innerHTML = `<div class="font-medium">2) 역전파</div><div class="mt-2">∂L/∂w1=${S.g_w1.toFixed(
+            6
+          )}, ∂L/∂w2=${S.g_w2.toFixed(6)}, ∂L/∂w3=${S.g_w3.toFixed(
+            6
+          )}, ∂L/∂w4=${S.g_w4.toFixed(6)}, ∂L/∂w5=${S.g_w5.toFixed(
+            6
+          )}, ∂L/∂w6=${S.g_w6.toFixed(6)}</div>`;
+          $("#sim-backward").disabled = true;
+          $("#sim-update").disabled = false;
+        }
+
+        function update() {
+          const v = vals();
+          const eta = v["sim-lr"];
+          const keys = [
+            "sim-w1",
+            "sim-w2",
+            "sim-w3",
+            "sim-w4",
+            "sim-w5",
+            "sim-w6",
+          ];
+          let html = `<div class="font-medium">3) 가중치 업데이트</div><div class="mt-2 space-y-1">`;
+          keys.forEach((k) => {
+            const g = S["g_" + k.slice(4)];
+            const old = v[k];
+            const nw = old - eta * g;
+            $("#" + k).value = nw.toFixed(4);
+            $("#wlabel-" + k).textContent = nw.toFixed(4);
+            html += `<div>${k.slice(4)}: ${old.toFixed(4)} - ${eta}×${g.toFixed(
+              6
+            )} = <span class="font-medium">${nw.toFixed(4)}</span></div>`;
+          });
+          html += `</div><div class="mt-2 text-slate-600">다시 순전파를 실행하여 Loss 변화를 확인하세요.</div>`;
+          $("#sim-log").innerHTML = html;
+          $("#sim-forward").disabled = false;
+          $("#sim-backward").disabled = true;
+          $("#sim-update").disabled = true;
+          $$("#sim-svg .glabel").forEach((e) => (e.textContent = ""));
+        }
+
+        function reset() {
+          ids.forEach((id) => {
+            const el = $("#" + id);
+            if (el && Object.prototype.hasOwnProperty.call(iv, id))
+              el.value = iv[id];
+          });
+          clearPos();
+          draw();
+          ["sim-x1", "sim-x2", "sim-h1", "sim-h2", "sim-o1"].forEach((id) => {
+            $("#" + id + " .val").textContent = "";
+            $("#" + id).classList.remove("active");
+          });
+          $("#sim-log").textContent = "버튼을 눌러 계산을 시작하세요.";
+          $("#sim-forward").disabled = false;
+          $("#sim-backward").disabled = true;
+          $("#sim-update").disabled = true;
+          // seed input values on nodes
+          $("#sim-x1 .val").textContent = "v=" + $("#sim-x1-in").value;
+          $("#sim-x2 .val").textContent = "v=" + $("#sim-x2-in").value;
+        }
+
+        function wire() {
+          $("#sim-forward").addEventListener("click", forward);
+          $("#sim-backward").addEventListener("click", backward);
+          $("#sim-update").addEventListener("click", update);
+          $("#sim-reset").addEventListener("click", reset);
+          // redraw on inputs change
+          ids.forEach((id) => {
+            const el = $("#" + id);
+            el.addEventListener("input", () => {
+              if (id.startsWith("sim-w")) {
+                $("#wlabel-" + id).textContent = el.value;
+              }
+              if (id === "sim-x1-in" || id === "sim-x2-in") {
+                $("#" + id.replace("-in", "") + " .val").textContent =
+                  "v=" + el.value;
+              }
+            });
+          });
+          window.addEventListener("resize", () => {
+            clearPos();
+            draw();
+          });
+        }
+
+        window.simInit = function simInit() {
+          const el = $("#sim-network");
+          if (!el) return;
+          ids.forEach((id) => {
+            iv[id] = $("#" + id).value;
+          });
+          draw();
+          wire();
+          reset();
+          S.ready = true;
+        };
+        // expose redraw so we can reflow when <details> opens
+        window.simRedraw = function () {
+          clearPos();
+          draw();
+        };
+      })();
+    </script>
+  </body>
+</html>

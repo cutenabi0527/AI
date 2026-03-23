@@ -1,0 +1,5 @@
+# Data files
+Day_05_CNN실습 (3-1)/Practice_분할버전/data/
+*.tar.gz
+*.zip
+*.pth

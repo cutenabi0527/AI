@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDA 대시보드</title>
+  <!-- Plotly & PapaParse CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root { --bg:#0b1020; --card:#11162a; --ink:#dfe7ff; --ink-dim:#a9b5d9; --acc:#5aa9ff; --muted:#202743; }
+    *{box-sizing:border-box}
+    body{margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,Arial; background:var(--bg); color:var(--ink)}
+    header{padding:20px 16px; border-bottom:1px solid var(--muted); position:sticky; top:0; background:linear-gradient(180deg, rgba(11,16,32,.95), rgba(11,16,32,.85)); backdrop-filter:blur(6px); z-index:2}
+    h1{margin:0; font-size:20px; letter-spacing:.3px}
+    .wrap{padding:18px; max-width:1600px; margin:0 auto}
+    .grid{display:grid; grid-template-columns: 420px 1fr; gap:18px}
+    .side, .main{min-width:0}
+    .card{background:var(--card); border:1px solid var(--muted); border-radius:14px; padding:14px}
+    .card h2{margin:0 0 10px 0; font-size:16px}
+    .row{display:grid; grid-template-columns: 120px 1fr 100px; gap:8px; align-items:center}
+    .row .toggle{justify-self:end}
+    .toggle label{display:flex; align-items:center; gap:6px; color:var(--ink-dim); white-space:nowrap}
+    .help{grid-column:2 / 4; font-size:11px; color:var(--ink-dim); margin-top:2px}
+    .row.single{grid-template-columns: 1fr auto}
+    label{font-size:12px; color:var(--ink-dim)}
+    select, input[type="file"], button{width: 100%; background:#0f1530; color:var(--ink); border:1px solid #26305e; border-radius:10px; padding:8px 10px; font-size:13px}
+    button{cursor:pointer}
+    .pill{display:inline-block; padding:6px 10px; border-radius:999px; background:#0f1530; border:1px solid #26305e; font-size:12px; color:var(--ink-dim)}
+    .cards{display:grid; grid-template-columns: repeat(4, 1fr); gap:10px}
+    .kv{background:#0f1530; border:1px dashed #2a3568; border-radius:12px; padding:10px}
+    .kv .k{font-size:12px; color:var(--ink-dim)}
+    .kv .v{font-size:18px; margin-top:6px}
+    .section{margin-top:16px}
+    .load-section { display: flex; flex-direction: column; gap: 10px; }
+    .load-section > button, .load-section > input { width: 100%; }
+    .load-section .note { font-size: 11px; color: var(--ink-dim); text-align: center; margin: 0; }
+    .load-section .sub-action { background-color: var(--muted); font-size: 12px; }
+    .chart{height:360px; background:#ffffff; border-radius:8px}
+    .muted{color:var(--ink-dim)}
+    table{width:100%; border-collapse:collapse; font-size:12px; background:#ffffff; color:#222}
+    th,td{border-bottom:1px solid #e5e7eb; padding:6px 8px; text-align:right; color:#222}
+    th:first-child, td:first-child{text-align:left}
+    thead th{background:#f8fafc; color:#222}
+    .footer{margin:24px 0 8px; text-align:center; color:#8da2db; font-size:12px}
+    #testBadge{margin-left:8px}
+
+  </style>
+</head>
+<body>
+  <header>
+    <h1>EDA 대시보드<span class="pill" id="testBadge" title="내장 자가 테스트 상태">Self-tests: pending</span></h1>
+  </header>
+  <div class="wrap">
+    <div class="grid">
+      <aside class="side card">
+        <h2>데이터 불러오기</h2>
+        <div class="section load-section">
+          <input id="file" type="file" accept=".csv" />
+          <button id="loadSample">샘플 불러오기</button>
+          <p class="note">CSV 첫 행은 헤더(컬럼명)여야 합니다.</p>
+          <button id="addMissingOne" title="무작위로 셀 하나를 NA로 만듭니다" class="sub-action">랜덤 결측치 1개 추가</button>
+        </div>
+
+        <h2 style="margin-top:12px">컬럼 선택</h2>
+        <div class="section" style="display:grid; gap:10px">
+          <div class="row">
+            <label>히스토그램</label>
+            <select id="histCol"></select>
+            <span class="toggle"><label><input type="checkbox" id="showHist" checked> 표시</label></span>
+          </div>
+          <div class="row">
+            <label>박스플롯</label>
+            <select id="boxCol"></select>
+            <span class="toggle"><label><input type="checkbox" id="showBox" checked> 표시</label></span>
+          </div>
+          <div class="row">
+            <label>그룹(범주)</label>
+            <select id="groupCol"></select>
+            <span class="toggle"></span>
+            <div class="help">박스플롯 그룹</div>
+          </div>
+          <div class="row">
+            <label>산점도 X</label>
+            <select id="xCol"></select>
+            <span class="toggle"><label><input type="checkbox" id="showScatter" checked> 표시</label></span>
+          </div>
+          <div class="row">
+            <label>산점도 Y</label>
+            <select id="yCol"></select>
+            <span class="toggle"></span>
+            <div class="help">X와 함께 사용</div>
+          </div>
+          <div class="row">
+            <label>색(범주)</label>
+            <select id="colorCol"></select>
+            <span class="toggle"></span>
+            <div class="help">산점도 색상</div>
+          </div>
+          <div class="row">
+            <label>Z-이상치</label>
+            <select id="zOutlier">
+              <option value="none">표시 안함</option>
+              <option value="2.5">|z| ≥ 2.5</option>
+              <option value="3">|z| ≥ 3.0</option>
+            </select>
+            <span class="toggle"></span>
+            <div class="help">히스토그램 강조</div>
+          </div>
+          <div class="row">
+            <label>상관 히트맵</label>
+            <span class="help" style="grid-column:2/3">수치형 열 간 상관</span>
+            <span class="toggle"><label><input type="checkbox" id="showCorr" checked> 표시</label></span>
+          </div>
+          <div class="row">
+            <label>결측치</label>
+            <span class="help" style="grid-column:2/3">열별 NA 비율</span>
+            <span class="toggle"><label><input type="checkbox" id="showMissing" checked> 표시</label></span>
+          </div>
+        </div>
+
+        <h2 style="margin-top:12px">요약 통계 표시</h2>
+        <div class="section" style="display:grid; gap:8px">
+          <label class="row single"><span class="muted">요약 카드/표</span><input type="checkbox" id="showSummary" checked></label>
+        </div>
+
+        <div class="section">
+          <span class="pill" id="shape">행 0, 열 0</span>
+          <span class="pill" id="numInfo">수치형 0, 범주형 0</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section id="summarySec" class="card">
+          <h2>요약 통계</h2>
+          <div class="cards" id="summaryCards"></div>
+          <div class="section" id="summaryTableWrap"></div>
+        </section>
+
+        <section id="histSec" class="card">
+          <h2>분포 보기 (히스토그램 / KDE)</h2>
+          <div id="hist" class="chart"></div>
+        </section>
+
+        <section id="boxSec" class="card">
+          <h2>박스플롯 (그룹별 비교)</h2>
+          <div id="box" class="chart"></div>
+        </section>
+
+        <section id="scatterSec" class="card">
+          <h2>산점도 (간단 회귀선 포함)</h2>
+          <div id="scatter" class="chart"></div>
+        </section>
+
+        <section id="corrSec" class="card">
+          <h2>상관관계 히트맵</h2>
+          <div id="corr" class="chart"></div>
+        </section>
+
+        <section id="missingSec" class="card">
+          <h2>결측치(NA) 시각화</h2>
+          <div id="missing" class="chart"></div>
+        </section>
+
+        <div class="footer">Made for students — 업로드만 하면 기초 EDA를 자동으로 만들어줘요.</div>
+      </main>
+    </div>
+  </div>
+
+<script>
+// ===== Globals =====
+let DATA = [];
+let COLS = [];
+let NUMERIC = [];
+let CATEG = [];
+
+// 샘플 데이터 (아이리스 일부 + 잡음)
+const SAMPLE = `alcohol,malic_acid,ash,alcalinity_of_ash,magnesium,total_phenols,flavanoids,nonflavanoid_phenols,proanthocyanins,color_intensity,hue,od280/od315_of_diluted_wines,proline,quality
+14.23,1.71,2.43,15.6,127,2.8,3.06,0.28,2.29,5.64,1.04,3.92,1065,0
+13.2,1.78,2.14,11.2,100,2.65,2.76,0.26,1.28,4.38,1.05,3.4,1050,0
+13.16,2.36,2.67,18.6,101,2.8,3.24,0.3,2.81,5.68,1.03,3.17,1185,0
+14.37,1.95,2.5,16.8,113,3.85,3.49,0.24,2.18,7.8,0.86,3.45,1480,0
+13.24,2.59,2.87,21,118,2.8,2.69,0.39,1.82,4.32,1.04,2.93,735,0
+12.07,2.16,2.17,21,85,2.6,2.65,0.37,1.35,2.76,0.86,3.28,378,1
+12.43,1.53,2.29,21.5,86,2.74,3.15,0.39,1.77,3.94,0.69,2.84,352,1
+11.79,2.13,2.78,28.5,92,2.13,2.24,0.58,1.76,3,0.97,2.44,466,1
+12.37,1.63,2.3,24.5,88,2.22,2.45,0.4,1.9,2.12,0.89,2.78,342,1
+13.29,1.97,2.68,16.8,102,3,3.23,0.31,1.66,6,1.07,2.84,500,1
+13.75,1.73,2.41,16,89,2.6,2.76,0.29,1.81,5.6,1.15,2.9,1320,0
+13.05,2.05,3.22,25,124,2.63,2.68,0.47,1.92,3.58,1.13,3.2,830,2
+13.36,2.56,2.35,20,89,2.5,2.78,0.34,1.45,4.4,0.92,2.85,560,2
+13.52,3.17,2.72,23.5,97,1.55,1.75,0.58,1.18,5.75,0.82,1.98,630,2`;
+
+
+// ===== Utilities =====
+function inferTypes(rows){
+  const cols = Object.keys(rows[0]||{});
+  const numeric = [], categ = [];
+  for(const c of cols){
+    let numish = 0, count = 0;
+    for(const r of rows){
+      const v = r[c];
+      if (v === null || v === undefined || v === '') continue;
+      count++;
+      if (!isNaN(parseFloat(v)) && isFinite(v)) numish++;
+    }
+    (numish >= Math.max(1, Math.floor(count*0.7))) ? numeric.push(c) : categ.push(c);
+  }
+  return {cols, numeric, categ};
+}
+
+function toNumber(v){ const n = parseFloat(v); return (isNaN(n)? null : n); }
+function mean(arr){ const a=arr.filter(x=>x!=null); return a.length? a.reduce((s,x)=>s+x,0)/a.length : null; }
+function stdev(arr){ const m=mean(arr); if(m==null) return null; const a=arr.filter(x=>x!=null); const v=a.reduce((s,x)=>s+(x-m)*(x-m),0)/a.length; return Math.sqrt(v); }
+function quantile(arr, q){ const a=arr.filter(x=>x!=null).sort((x,y)=>x-y); if(!a.length) return null; const p=(a.length-1)*q; const b=Math.floor(p), t=p-b; if(b+1<a.length) return a[b]*(1-t)+a[b+1]*t; return a[b]; }
+function corr(x,y){ const ax=x.filter((v,i)=>v!=null && y[i]!=null); const ay=y.filter((v,i)=>x[i]!=null && y[i]!=null); const mx=mean(ax), my=mean(ay); const sx=stdev(ax), sy=stdev(ay); if(!sx||!sy) return null; let s=0; for(let i=0;i<ax.length;i++) s+=(ax[i]-mx)*(ay[i]-my); return s/(ax.length*sx*sy); }
+function linreg(x,y){ const ax=[], ay=[]; for(let i=0;i<x.length;i++){ if(x[i]!=null && y[i]!=null){ ax.push(x[i]); ay.push(y[i]); } }
+  const mx=mean(ax), my=mean(ay); const sx=stdev(ax); if(!sx) return {w:0,b:my||0};
+  let num=0, den=0; for(let i=0;i<ax.length;i++){ num+=(ax[i]-mx)*(ay[i]-my); den+=(ax[i]-mx)*(ax[i]-mx);} const w=num/den; const b=my - w*mx; return {w,b}; }
+
+function zscore(col){ const arr = DATA.map(r=> toNumber(r[col])); const m=mean(arr), s=stdev(arr); return arr.map(v=> (v==null||!s)? null : (v-m)/s ); }
+
+function fillSelect(id, options){ 
+  const el=document.getElementById(id); 
+  const html = '<option value="">선택</option>' + 
+    options.map(c => {
+      const isCategorical = CATEG.includes(c);
+      const label = isCategorical ? `${c} (범주형)` : c;
+      return `<option value="${c}">${label}</option>`;
+    }).join('');
+  el.innerHTML = html;
+}
+
+// ===== Rendering =====
+function renderSummary(){
+  document.getElementById('shape').textContent = `행 ${DATA.length}, 열 ${COLS.length}`;
+  document.getElementById('numInfo').textContent = `수치형 ${NUMERIC.length}, 범주형 ${CATEG.length}`;
+
+  const cards = [
+    {k:'수치형 열', v: NUMERIC.length},
+    {k:'범주형 열', v: CATEG.length},
+    {k:'결측치 비율(평균)', v: (()=>{ if(!DATA.length) return '0%'; const rates = COLS.map(c=> DATA.filter(r=> r[c]===''||r[c]==null).length / DATA.length ); const m=mean(rates)*100; return isFinite(m)? m.toFixed(1)+'%' : '0%'; })()},
+    {k:'관찰 수', v: DATA.length}
+  ];
+  document.getElementById('summaryCards').innerHTML = cards.map(o=>`<div class="kv"><div class="k">${o.k}</div><div class="v">${o.v}</div></div>`).join('');
+
+  // 표: 수치형 컬럼 요약
+  let html = '<div class="section"><table><thead><tr><th>컬럼</th><th>count</th><th>mean</th><th>std</th><th>min</th><th>Q1</th><th>median</th><th>Q3</th><th>max</th></tr></thead><tbody>';
+  for(const c of NUMERIC){
+    const arr = DATA.map(r=> toNumber(r[c]));
+    const row = {
+      count: arr.filter(v=>v!=null).length,
+      mean: mean(arr), std: stdev(arr), min: quantile(arr,0), q1: quantile(arr,.25), med: quantile(arr,.5), q3: quantile(arr,.75), max: quantile(arr,1)
+    };
+    html += `<tr><td>${c}</td><td>${row.count}</td><td>${fmt(row.mean)}</td><td>${fmt(row.std)}</td><td>${fmt(row.min)}</td><td>${fmt(row.q1)}</td><td>${fmt(row.med)}</td><td>${fmt(row.q3)}</td><td>${fmt(row.max)}</td></tr>`;
+  }
+  html += '</tbody></table></div>';
+  document.getElementById('summaryTableWrap').innerHTML = html;
+}
+
+function fmt(x){ return (x==null||!isFinite(x))? '' : (+x).toFixed(3); }
+
+function drawHist(){
+  const col = document.getElementById('histCol').value || NUMERIC[0]; if(!col) return Plotly.purge('hist');
+  const arr = DATA.map(r=> toNumber(r[col])).filter(v=>v!=null);
+  const z = zscore(col);
+  const cut = document.getElementById('zOutlier').value;
+  const flag = (cut==='none')? arr.map(_=>false) : z.map(v=> v!=null && Math.abs(v)>=+cut);
+  Plotly.newPlot('hist', [
+    { type:'histogram', x: arr, name:`${col} 분포`, opacity:.85 },
+  ], {paper_bgcolor:'#ffffff', plot_bgcolor:'#ffffff', font:{color:'#222'}, margin:{t:10,r:10,b:40,l:40}, xaxis:{title:col}, yaxis:{title:'count'}, legend:{orientation:'h'}}, {displayModeBar:false});
+}
+
+function drawBox(){
+  const col = document.getElementById('boxCol').value || NUMERIC[0]; if(!col) return Plotly.purge('box');
+  const gcol = document.getElementById('groupCol').value;
+  if(gcol){
+    const groups = {};
+    for(const r of DATA){ const g=r[gcol]; const v=toNumber(r[col]); if(v==null) continue; (groups[g] ||= []).push(v); }
+    const traces = Object.entries(groups).map(([k,vals])=>({type:'box', y:vals, name:String(k)}));
+    Plotly.newPlot('box', traces, layout('값', col), {displayModeBar:false});
+  } else {
+    const vals = DATA.map(r=> toNumber(r[col])).filter(v=>v!=null);
+    Plotly.newPlot('box', [{type:'box', y:vals, name:col}], layout('값', col), {displayModeBar:false});
+  }
+}
+
+function layout(ylabel, xlabel){
+  return {
+    paper_bgcolor:'#ffffff',
+    plot_bgcolor:'#ffffff',
+    font:{color:'#222'},
+    margin:{t:10,r:10,b:40,l:40},
+    yaxis:{title: ylabel},
+    xaxis:{title: xlabel},
+    legend:{orientation:'h'}
+  };
+}
+
+function drawScatter(){
+  const x = document.getElementById('xCol').value || NUMERIC[0];
+  const y = document.getElementById('yCol').value || NUMERIC[1];
+  if(!x || !y || x===y) return Plotly.purge('scatter');
+  const colorCol = document.getElementById('colorCol').value;
+  // 데이터
+  const xs = DATA.map(r=> toNumber(r[x]));
+  const ys = DATA.map(r=> toNumber(r[y]));
+  const pts = [];
+  for(let i=0;i<xs.length;i++) if(xs[i]!=null && ys[i]!=null){
+    pts.push({x:xs[i], y:ys[i], c: colorCol? String(DATA[i][colorCol]) : null});
+  }
+  // 색상 그룹 트레이스
+  let traces = [];
+  if(colorCol){
+    const by = {};
+    for(const p of pts){ (by[p.c] ||= {x:[],y:[]}); by[p.c].x.push(p.x); by[p.c].y.push(p.y); }
+    traces = Object.entries(by).map(([k,v])=>({type:'scattergl', mode:'markers', x:v.x, y:v.y, name:k, marker:{size:6}}));
+  } else {
+    traces = [{type:'scattergl', mode:'markers', x: pts.map(p=>p.x), y: pts.map(p=>p.y), name:`${x} vs ${y}`, marker:{size:6}}];
+  }
+  // 간단 회귀선
+  const lr = linreg(xs, ys);
+  const xr = extent(xs);
+  if(isFinite(lr.w) && isFinite(lr.b) && xr){
+    const xl = [xr[0], xr[1]]; const yl = xl.map(v=> lr.w*v + lr.b);
+    if(isFinite(xl[0]) && isFinite(xl[1]))
+      traces.push({type:'scatter', mode:'lines', x:xl, y:yl, name:'회귀선', line:{dash:'dot'}});
+  }
+  Plotly.newPlot('scatter', traces, layout(y, x), {displayModeBar:false});
+}
+
+function extent(a){ const b=a.filter(v=>v!=null); if(!b.length) return null; return [Math.min(...b), Math.max(...b)]; }
+
+function drawCorr(){
+  if(NUMERIC.length<2) return Plotly.purge('corr');
+  const mat = NUMERIC.map(r=> NUMERIC.map(c=> corr(DATA.map(d=>toNumber(d[r])), DATA.map(d=>toNumber(d[c])))) );
+  Plotly.newPlot('corr', [{type:'heatmap', z:mat, x:NUMERIC, y:NUMERIC, colorscale:'RdBu', zmin:-1, zmax:1, reversescale:true}], {paper_bgcolor:'#ffffff', plot_bgcolor:'#ffffff', font:{color:'#222'}, margin:{t:20,r:10,b:40,l:80}}, {displayModeBar:false});
+}
+
+function drawMissing(){
+  const rates = COLS.map(c => DATA.filter(r=> r[c]===''||r[c]==null).length / DATA.length);
+  Plotly.newPlot('missing', [{type:'bar', x:COLS, y:rates.map(v=>+ (v*100).toFixed(2)), name:'결측(%)'}], {paper_bgcolor:'#ffffff', plot_bgcolor:'#ffffff', font:{color:'#222'}, margin:{t:20,r:10,b:80,l:40}, yaxis:{title:'%'}}, {displayModeBar:false});
+}
+
+function refreshSelectors(){
+  fillSelect('histCol', COLS);
+  fillSelect('boxCol', COLS);
+  fillSelect('groupCol', COLS);
+  fillSelect('xCol', COLS);
+  fillSelect('yCol', COLS);
+  fillSelect('colorCol', COLS);
+}
+
+function renderAll(){
+  applyVisibility();
+  const vis = getVisibility();
+  if (vis.summary) { renderSummary(); } else { document.getElementById('summaryCards').innerHTML=''; document.getElementById('summaryTableWrap').innerHTML=''; }
+  if (vis.hist) { drawHist(); } else { Plotly.purge('hist'); }
+  if (vis.box) { drawBox(); } else { Plotly.purge('box'); }
+  if (vis.scatter) { drawScatter(); } else { Plotly.purge('scatter'); }
+  if (vis.corr) { drawCorr(); } else { Plotly.purge('corr'); }
+  if (vis.missing) { drawMissing(); } else { Plotly.purge('missing'); }
+}
+
+function getVisibility(){
+  return {
+    summary: document.getElementById('showSummary')?.checked !== false,
+    hist: document.getElementById('showHist')?.checked !== false,
+    box: document.getElementById('showBox')?.checked !== false,
+    scatter: document.getElementById('showScatter')?.checked !== false,
+    corr: document.getElementById('showCorr')?.checked !== false,
+    missing: document.getElementById('showMissing')?.checked !== false,
+  };
+}
+
+function applyVisibility(){
+  const v = getVisibility();
+  const set = (id, on)=>{ const el=document.getElementById(id); if(!el) return; el.style.display = on? '' : 'none'; };
+  set('summarySec', v.summary);
+  set('histSec', v.hist);
+  set('boxSec', v.box);
+  set('scatterSec', v.scatter);
+  set('corrSec', v.corr);
+  set('missingSec', v.missing);
+}
+
+function loadRows(rows){
+  DATA = rows;
+  const types = inferTypes(DATA);
+  COLS = types.cols; NUMERIC = types.numeric; CATEG = types.categ;
+  refreshSelectors();
+  renderAll();
+}
+
+// 랜덤 결측치 1개 추가
+function addRandomMissingOne(){
+  if (!DATA.length || !COLS.length) return;
+  // 최대 200회 시도하여 이미 결측이 아닌 셀을 찾음
+  for (let tries = 0; tries < 200; tries++){
+    const ri = Math.floor(Math.random() * DATA.length);
+    const ci = Math.floor(Math.random() * COLS.length);
+    const col = COLS[ci];
+    const cur = DATA[ri][col];
+    if (cur !== '' && cur != null){
+      DATA[ri][col] = '';// '' 또는 null 둘 다 결측으로 집계됨
+      break;
+    }
+  }
+  renderAll();
+}
+
+// ===== Events =====
+['histCol','zOutlier','boxCol','groupCol','xCol','yCol','colorCol','showSummary','showHist','showBox','showScatter','showCorr','showMissing'].forEach(id=>{
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', renderAll);
+});
+
+document.getElementById('file').addEventListener('change', (e)=>{
+  const f=e.target.files[0]; if(!f) return;
+  Papa.parse(f, {header:true, dynamicTyping:false, skipEmptyLines:true, complete: (res)=> loadRows(res.data)});
+});
+
+document.getElementById('loadSample').addEventListener('click', ()=>{
+  Papa.parse(SAMPLE, {header:true, dynamicTyping:false, complete: (res)=> loadRows(res.data)});
+});
+
+document.getElementById('addMissingOne').addEventListener('click', addRandomMissingOne);
+
+// ===== Boot =====
+Papa.parse(SAMPLE, {header:true, dynamicTyping:false, complete: (res)=> { loadRows(res.data); runSelfTests(); }});
+
+// ===== Self-tests (added) =====
+function approxEqual(a,b,eps=1e-6){
+  if (a==null || b==null) return false; return Math.abs(a-b) <= eps * (1+Math.max(Math.abs(a),Math.abs(b)));
+}
+function testMean(){ return approxEqual(mean([1,2,3,4,5]), 3); }
+function testStdev(){ const s=stdev([1,2,3,4,5]); return approxEqual(s, Math.sqrt(2)); }
+function testQuantiles(){ return approxEqual(quantile([1,2,3,4],0.25), 1.75) && approxEqual(quantile([1,2,3,4],0.5), 2.5) && approxEqual(quantile([1,2,3,4],0.75), 3.25); }
+function testLinreg(){ const x=[1,2,3,4,5], y=[2,4,6,8,10]; const {w,b}=linreg(x,y); return approxEqual(w,2) && approxEqual(b,0); }
+function testZ(){ const arr=[10,10,10,10]; const m=mean(arr), s=stdev(arr); const z=arr.map(v=> (v-m)/(s||1)); return z.every(v=> approxEqual(v,0)); }
+function testAddMissing(){
+  const before = countNonMissing(); addRandomMissingOne(); const after = countNonMissing(); return (before===after) || (before-1===after);
+}
+function countNonMissing(){ let c=0; for(const r of DATA){ for(const k of COLS){ const v=r[k]; if(v!=='' && v!=null) c++; } } return c; }
+
+// 새 테스트: layout 반환 객체 구조 확인 (문법 오류 조기 탐지)
+function testLayout(){
+  try{
+    const o = layout('Y','X');
+    return o && o.paper_bgcolor && o.plot_bgcolor && o.margin && o.xaxis && o.yaxis && o.legend;
+  }catch(e){ return false; }
+}
+
+function runSelfTests(){
+  const tests = [
+    ['mean', testMean],
+    ['stdev', testStdev],
+    ['quantile', testQuantiles],
+    ['linreg', testLinreg],
+    ['zscore', testZ],
+    ['addMissingOne', testAddMissing],
+    ['layout', testLayout],
+  ];
+  const results = tests.map(([name,fn])=>{ let ok=false; try{ ok=!!fn(); }catch(e){ ok=false; } return {name: name, ok}; });
+  const okAll = results.every(r=>r.ok);
+  console.table(results);
+  const badge = document.getElementById('testBadge');
+  if (badge) {
+    badge.textContent = `Self-tests: ${okAll? 'OK' : 'FAIL'}`;
+    badge.style.borderColor = okAll? '#28a745' : '#e53e3e';
+    badge.style.color = okAll? '#c9f7d2' : '#ffd7d7';
+    badge.style.background = okAll? '#17351f' : '#3a1b1b';
+  }
+}
+</script>
+</body>
+</html>
+

@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 모델 만들기 체험 (데이터 여정)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f9;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            background: #fff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        h1, h2, h3, h4 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            margin-top: 40px;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2.2em;
+            border-bottom: none;
+        }
+        h2 {
+            font-size: 1.8em;
+        }
+        section {
+            margin-bottom: 40px;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #ecf0f1;
+            border-radius: 8px;
+            text-align: center;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin: 5px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        .chart-wrapper {
+            position: relative;
+            height: 350px;
+            width: 100%;
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        canvas {
+            max-width: 100%;
+        }
+        .table-container {
+            margin-top: 15px;
+        }
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .results-table th, .results-table td {
+            border: 1px solid #e0e0e0;
+            padding: 10px 12px;
+            text-align: center;
+        }
+        .results-table th {
+            background-color: #f7f9fa;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        .results-table tr:nth-child(even) { background-color: #fdfdfd; }
+        .results-table .cm-header { font-weight: bold; background-color: #f2f5f7; }
+        .slider-container, .option-container {
+            margin: 15px 0;
+        }
+        input[type="range"] {
+            width: 50%;
+        }
+        .concept-box {
+            background: #eaf2f8;
+            border-left: 5px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .concept-box strong { color: #2980b9; }
+        .flex-container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        .flex-child {
+            flex: 1;
+            min-width: 0; /* Prevents flex children from overflowing */
+        }
+        .intro-text {
+            text-align: center;
+            font-size: 1.1em;
+            margin-bottom: 40px;
+            color: #555;
+        }
+        #kmeans-step-info, #training-step-info {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        @media (max-width: 992px) {
+            .flex-container {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📊 AI 모델 만들기 전체 과정 체험하기</h1>
+    <p class="intro-text">AI 모델을 만드는 것은 '데이터를 보고 규칙을 학습하는 기계'를 만드는 여정과 같습니다.<br>아래 단계를 따라가며 데이터가 어떻게 모델로 변신하는지 직접 확인해보세요!</p>
+
+    <div class="option-container" style="text-align:center; background-color: #fff8e1; padding: 10px; border-radius: 8px;">
+        <label for="complex-data-checkbox"><strong>[실험] </strong>더 어려운(겹치는) 데이터 생성하기</label>
+        <input type="checkbox" id="complex-data-checkbox" onchange="resetAll()">
+    </div>
+
+    <section id="split">
+        <h2>1단계: 데이터 준비 (학습용과 시험용 분리)</h2>
+        <div class="concept-box">
+            <strong>🤔 왜 데이터를 나눠야 할까요?</strong><br>
+            모델을 공부시킬 '연습문제(Train Set)'와, 공부가 끝난 모델을 평가할 '실제 시험(Test Set)'으로 나누는 과정입니다. 만약 연습문제로 시험을 보면, 답을 외워서 100점을 맞을 순 있지만 새로운 문제를 풀 순 없겠죠? 모델이 얼마나 '일반화'되었는지 공정하게 평가하기 위해 데이터를 반드시 분리해야 합니다.
+        </div>
+        <div class="controls">
+            <button onclick="runTrainTestSplit(false)">데이터 나누기</button>
+            <button onclick="runTrainTestSplit(true)">데이터 비율 맞춰 나누기 (Stratify)</button>
+        </div>
+        <div class="chart-wrapper"><canvas id="splitChart"></canvas></div>
+        <div id="splitResult" class="table-container" style="display:none;"></div>
+    </section>
+
+    <hr>
+    <section id="scaling">
+        <h2>2단계: 데이터 다듬기 (단위 맞추기)</h2>
+        <div class="concept-box">
+             <strong>🤔 왜 단위를 맞춰야 할까요?</strong><br>
+            만약 '키(170cm)'와 '나이(25세)'라는 두 가지 특성이 있다면, 모델은 숫자 값이 훨씬 큰 '키'에 더 많은 영향을 받게 됩니다. 이런 불공평을 막기 위해 모든 특성들이 비슷한 범위의 값을 갖도록 '단위'를 맞춰주는 과정입니다. 스케일링을 통해 모델은 각 특성을 공평하게 바라보고 더 안정적으로 학습할 수 있습니다.
+        </div>
+        <div class="controls">
+            <button onclick="runScaling()">StandardScaler로 단위 맞추기</button>
+        </div>
+        <div class="chart-wrapper"><canvas id="scalingChart"></canvas></div>
+    </section>
+    
+    <hr>
+    <section id="model">
+        <h2>3단계: 모델 학습 (경사 하강법으로 규칙 찾기)</h2>
+        <div class="concept-box">
+            <strong>🤔 '학습'이란 무엇일까요? (경사 하강법 시뮬레이션)</strong><br>
+            이 단계의 목표는 데이터의 두 클래스를 가장 잘 나눌 수 있는 **최적의 '구분선(Decision Boundary)'**을 찾는 것입니다. 이 과정을 실제로 확인하기 위해, 머신러닝의 핵심 학습 알고리즘인 **경사 하강법(Gradient Descent)**을 시뮬레이션합니다.
+            <ol>
+                <li>아무렇게나 그은 무작위 선에서 학습을 시작합니다.</li>
+                <li>**'학습 실행'** 버튼을 누르면, 모델은 현재 선이 얼마나 데이터를 잘못 예측했는지(오류, Loss) 계산합니다.</li>
+                <li>오류를 가장 빨리 줄일 수 있는 방향으로 선을 아주 약간씩(Learning Rate) 움직입니다.</li>
+                <li>이 과정을 반복하면, 선은 점차 두 데이터를 가장 잘 나누는 최적의 위치로 이동하게 됩니다. 오른쪽 그래프는 학습이 진행될수록 오류(Loss)가 줄어드는 것을 보여줍니다.</li>
+            </ol>
+        </div>
+        <div class="controls">
+            <button onclick="initializeTraining()">1. 학습 시작/리셋</button>
+            <button id="training-step-btn" onclick="runTrainingStep(1)" disabled>2. 1회 학습</button>
+            <button id="training-step-100-btn" onclick="runTrainingStep(100)" disabled>3. 100회 학습</button>
+            <button id="training-step-1000-btn" onclick="runTrainingStep(1000)" disabled>4. 1000회 학습</button>
+            <span id="training-step-info"></span>
+        </div>
+        <div class="flex-container">
+            <div class="flex-child">
+                <h4>결정 경계 학습 과정</h4>
+                <div class="chart-wrapper"><canvas id="modelChart"></canvas></div>
+            </div>
+            <div class="flex-child">
+                <h4>학습에 따른 오류(Loss) 변화</h4>
+                <div class="chart-wrapper"><canvas id="lossChart"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <hr>
+    <section id="evaluation">
+        <h2>4단계: 모델 평가 (성적표 확인)</h2>
+        <div class="concept-box">
+            <strong>🤔 모델의 성능, 어떻게 숫자로 표현할까요?</strong><br>
+            학습된 모델(구분선)을 평가하기 위해, 먼저 각 데이터가 특정 클래스에 속할 **'확률'**을 계산해야 합니다. 이때 **시그모이드(Sigmoid) 함수**가 사용됩니다. 어떤 점과 구분선 사이의 거리를 이 함수에 넣으면, 0~1 사이의 확률값이 나옵니다. 이 확률을 아래 슬라이더의 **Threshold(임계값)**와 비교하여 최종적으로 0 또는 1로 예측합니다. 예측 결과 차트의 주황색 점선은 현재 Threshold를 나타내는 **'확률 등고선'**입니다.<br><br>
+            <strong>ROC 커브 vs. PR 커브</strong><br>
+            두 그래프 모두 임계값을 바꿔가며 모델의 성능을 종합적으로 보여주지만, 관점이 다릅니다. 페이지 상단의 '어려운 데이터' 옵션을 켜면 두 그래프가 왜 교과서처럼 곡선으로 그려지는지 확인할 수 있습니다.
+            <ul>
+                <li><b>ROC 커브:</b> 전체 클래스 비율이 균등할 때 유용합니다. Y축(TPR)은 '실제 정답을 얼마나 잘 맞췄는가'(이득), X축(FPR)은 '실제 오답을 얼마나 정답으로 착각했는가'(비용)를 나타냅니다.</li>
+                <li><b>PR(Precision-Recall) 커브:</b> 클래스 불균형이 심할 때(예: 암 진단, 불량품 검사) 더 유용합니다. Y축(Precision)은 '모델이 정답이라고 예측한 것 중 실제 정답 비율'(정확성), X축(Recall)은 '실제 정답 중 모델이 정답이라고 예측한 비율'(재현율)을 나타냅니다.</li>
+            </ul>
+        </div>
+        <div class="controls">
+            <button onclick="runEvaluation()">모델 성능 평가하기</button>
+            <div class="slider-container">
+                <label for="thresholdSlider">모델의 자신감 기준 (Threshold): </label>
+                <input type="range" id="thresholdSlider" min="0" max="1" step="0.01" value="0.5" oninput="updateEvaluationViews(this.value)">
+                <span id="thresholdValue">0.50</span>
+            </div>
+        </div>
+        <div class="chart-wrapper" style="height: 400px;"><canvas id="evaluationChart"></canvas></div>
+        <div class="flex-container" style="margin-top: 20px;">
+            <div class="flex-child">
+                <h3>ROC Curve</h3>
+                <div class="chart-wrapper"><canvas id="rocChart"></canvas></div>
+            </div>
+            <div class="flex-child">
+                <h3>Precision-Recall Curve</h3>
+                <div class="chart-wrapper"><canvas id="prChart"></canvas></div>
+            </div>
+        </div>
+        <div id="confusionMatrix" class="table-container" style="display:none; margin-top: 20px;">
+        </div>
+    </section>
+    
+    <hr>
+    <h2>번외: 데이터 탐색을 위한 다른 기법들</h2>
+    <p class="intro-text">모델링 외에도 데이터의 숨겨진 특징을 파악하기 위한 여러 기법들이 있습니다.</p>
+
+    <section id="dimension-reduction">
+        <h3>5. 차원 축소 (핵심 특징만 뽑아보기)</h3>
+        <div class="concept-box">
+            <strong>🤔 차원 축소는 왜 할까요?</strong><br>
+            특성이 수십, 수백 개가 되면 사람이 데이터를 이해하기 어렵습니다. PCA(주성분 분석)는 여러 특성에 흩어진 정보의 손실을 최소화하면서, 데이터를 가장 잘 설명하는 새로운 '핵심 축' 몇 개를 뽑아내는 기술입니다. 3차원 물체를 2차원 '그림자'로 표현해도 핵심 형태를 알아볼 수 있는 것과 같습니다. 데이터 시각화나 모델 학습 속도 개선에 유용합니다.
+        </div>
+        <div class="controls">
+            <button onclick="runPca()">PCA로 2차원으로 축소하기</button>
+        </div>
+        <div class="flex-container">
+            <div class="flex-child">
+                <h4>Original 3D Data (시뮬레이션)</h4>
+                <div class="chart-wrapper"><div id="pcaBeforeChart" style="height: 100%; width: 100%;"></div></div>
+            </div>
+            <div class="flex-child">
+                <h4>After PCA (2D)</h4>
+                <div class="chart-wrapper"><canvas id="pcaAfterChart"></canvas></div>
+            </div>
+        </div>
+    </section>
+    
+    <section id="clustering">
+        <h3>6. 군집화 (숨겨진 그룹 찾아내기)</h3>
+        <div class="concept-box">
+            <strong>🤔 군집화는 언제 사용할까요?</strong><br>
+            정답(레이블)이 없는 데이터에서 비슷한 특성을 가진 데이터끼리 '숨겨진 그룹'을 찾아내는 '비지도 학습'의 한 종류입니다. K-Means 알고리즘의 작동 방식을 아래에서 단계별로 확인해봅시다.<br>
+            <b>1. 할당(Assign):</b> 모든 점을 가장 가까운 중심점에 할당합니다.<br>
+            <b>2. 업데이트(Update):</b> 각 그룹의 중심점을 그룹에 속한 점들의 평균 위치로 이동합니다.<br>
+            이 두 과정을 중심점이 더 이상 변하지 않을 때까지 반복합니다.
+        </div>
+        <div class="controls">
+            <label for="kValue">찾아낼 그룹 개수(K): </label>
+            <select id="kValue">
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+            </select>
+            <button onclick="initializeKMeans()">1. 군집화 시작/리셋</button>
+            <button id="kmeans-step-btn" onclick="runKMeansStep()" disabled>2. 다음 단계 실행</button>
+            <span id="kmeans-step-info"></span>
+        </div>
+        <div class="chart-wrapper"><canvas id="kmeansChart"></canvas></div>
+    </section>
+
+</div>
+
+<script>
+// --- 전역 변수 및 데이터 생성 ---
+let originalData, trainData, testData, scaledTrainData, scaledTestData, model, probs;
+let kmeansState = {};
+let trainingState = {};
+const colors = {
+    class0: 'rgba(255, 99, 132, 0.7)', // Red
+    class1: 'rgba(54, 162, 235, 0.7)', // Blue
+    train: 'rgba(75, 192, 192, 0.7)',  // Green
+    test: 'rgba(255, 159, 64, 0.7)', // Orange
+    centroid: 'rgba(255, 206, 86, 1)', // Yellow
+    unlabeled: 'rgba(201, 203, 207, 0.7)', // Grey
+    tp: 'rgba(54, 162, 235, 0.9)',  // True Positive: Dark Blue
+    tn: 'rgba(255, 99, 132, 0.9)',  // True Negative: Dark Red
+    fp: 'rgba(255, 99, 132, 0.4)',  // False Positive: Light Red (X)
+    fn: 'rgba(54, 162, 235, 0.4)'   // False Negative: Light Blue (X)
+};
+
+// --- 차트 객체 전역 관리 ---
+const charts = {};
+
+function random_normal() {
+    let u = 0, v = 0;
+    while(u === 0) u = Math.random(); //Converting [0,1) to (0,1)
+    while(v === 0) v = Math.random();
+    return Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
+}
+
+function generateData(count = 150) {
+    const data = { X: [], y: [] };
+    const is_complex = document.getElementById('complex-data-checkbox').checked;
+
+    if (is_complex) {
+        const center0 = [2, 3], center1 = [5, 6];
+        const std = 1.5;
+        for (let i = 0; i < count; i++) {
+            const label = Math.random() < 0.5 ? 0 : 1;
+            let x1, x2;
+            if (label === 0) {
+                x1 = center0[0] + random_normal() * std;
+                x2 = center0[1] + random_normal() * std;
+            } else {
+                x1 = center1[0] + random_normal() * std;
+                x2 = center1[1] + random_normal() * std;
+            }
+            data.X.push([x1, x2]);
+            data.y.push(label);
+        }
+    } else {
+        for (let i = 0; i < count; i++) {
+            const label = Math.random() < 0.5 ? 0 : 1;
+            let x1, x2;
+            if (label === 0) {
+                x1 = Math.random() * 4 + 1; x2 = Math.random() * 4 + 1;
+            } else {
+                x1 = Math.random() * 4 + 6; x2 = Math.random() * 4 + 6;
+            }
+            data.X.push([x1, x2]);
+            data.y.push(label);
+        }
+    }
+    return data;
+}
+
+function createOrUpdateChart(id, config, withAnimation = true) {
+    const canvas = document.getElementById(id);
+    if (!canvas) { 
+        console.error("Canvas element not found:", id);
+        return;
+    }
+    const ctx = canvas.getContext('2d');
+    if (charts[id]) {
+        charts[id].destroy();
+    }
+
+    const existingOptions = config.options || {};
+    const existingHoverOptions = existingOptions.hover || {};
+
+    config.options = { 
+        ...existingOptions,
+        hover: {
+            ...existingHoverOptions,
+            animationDuration: 0 // Disables the "zoom" effect on hover
+        },
+        responsive: true, 
+        maintainAspectRatio: false 
+    }; 
+
+    if (!withAnimation) {
+        config.options.animation = false;
+    }
+
+    charts[id] = new Chart(ctx, config);
+}
+
+function resetAll() {
+    // Reset all data variables
+    originalData = undefined;
+    trainData = undefined;
+    testData = undefined;
+    scaledTrainData = undefined;
+    scaledTestData = undefined;
+    model = undefined;
+    probs = undefined;
+    kmeansState = {};
+    trainingState = {};
+
+    // Clear result divs
+    document.getElementById('splitResult').style.display = 'none';
+    document.getElementById('confusionMatrix').style.display = 'none';
+    
+    // Reset buttons and info spans
+    ['training-step-btn', 'training-step-100-btn', 'training-step-1000-btn', 'kmeans-step-btn'].forEach(id => {
+        if(document.getElementById(id)) document.getElementById(id).disabled = true;
+    });
+    if(document.getElementById('training-step-info')) document.getElementById('training-step-info').textContent = '';
+    if(document.getElementById('kmeans-step-info')) document.getElementById('kmeans-step-info').textContent = '';
+
+    // Redraw all placeholder charts by re-calling the onload logic
+    window.onload();
+
+    alert('데이터 생성 방식이 변경되었습니다. 1단계부터 다시 시작해주세요.');
+}
+
+function runTrainTestSplit(stratify = false) {
+    originalData = generateData();
+    const testSize = 0.3;
+    const shuffleIdx = Array.from(originalData.X.keys()).sort(() => Math.random() - 0.5);
+    
+    trainData = { X: [], y: [] };
+    testData = { X: [], y: [] };
+
+    if (stratify) {
+        const class0_idx = shuffleIdx.filter(i => originalData.y[i] === 0);
+        const class1_idx = shuffleIdx.filter(i => originalData.y[i] === 1);
+        const splitIdx0 = Math.floor(class0_idx.length * (1 - testSize));
+        const splitIdx1 = Math.floor(class1_idx.length * (1 - testSize));
+        class0_idx.slice(0, splitIdx0).forEach(i => { trainData.X.push(originalData.X[i]); trainData.y.push(originalData.y[i]); });
+        class0_idx.slice(splitIdx0).forEach(i => { testData.X.push(originalData.X[i]); testData.y.push(originalData.y[i]); });
+        class1_idx.slice(0, splitIdx1).forEach(i => { trainData.X.push(originalData.X[i]); trainData.y.push(originalData.y[i]); });
+        class1_idx.slice(splitIdx1).forEach(i => { testData.X.push(originalData.X[i]); testData.y.push(originalData.y[i]); });
+    } else {
+        const splitIndex = Math.floor(shuffleIdx.length * (1 - testSize));
+        shuffleIdx.slice(0, splitIndex).forEach(i => { trainData.X.push(originalData.X[i]); trainData.y.push(originalData.y[i]); });
+        shuffleIdx.slice(splitIndex).forEach(i => { testData.X.push(originalData.X[i]); testData.y.push(originalData.y[i]); });
+    }
+    
+    const trainPoints = trainData.X.map(d => ({x: d[0], y: d[1]}));
+    const testPoints = testData.X.map(d => ({x: d[0], y: d[1]}));
+    
+    const config = {
+        type: 'scatter',
+        data: {
+            datasets: [
+                { label: '학습용 데이터 (Train)', data: trainPoints, backgroundColor: colors.train },
+                { label: '평가용 데이터 (Test)', data: testPoints, backgroundColor: colors.test }
+            ]
+        },
+        options: { plugins: { title: { display: true, text: '데이터 분할 결과' }}} // Corrected: Removed trailing comma
+    };
+    createOrUpdateChart('splitChart', config, false);
+    
+    const totalRatio0 = originalData.y.filter(l=>l===0).length / originalData.y.length;
+    const trainRatio0 = trainData.y.length > 0 ? trainData.y.filter(l => l===0).length / trainData.y.length : 0;
+    const testRatio0 = testData.y.length > 0 ? testData.y.filter(l => l===0).length / testData.y.length : 0;
+    
+    const resultsHtml = `
+        <table class="results-table">
+            <tr><th>항목</th><th>총 개수</th><th>Class 0 비율</th></tr>
+            <tr><td>원본 데이터</td><td>${originalData.X.length}</td><td>${totalRatio0.toFixed(2)}</td></tr>
+            <tr><td>학습용 데이터</td><td>${trainData.X.length}</td><td>${trainRatio0.toFixed(2)}</td></tr>
+            <tr><td>평가용 데이터</td><td>${testData.X.length}</td><td>${testRatio0.toFixed(2)}</td></tr>
+        </table>
+    `;
+    const resultDiv = document.getElementById('splitResult');
+    resultDiv.innerHTML = resultsHtml;
+    resultDiv.style.display = 'block';
+}
+
+function runScaling() {
+    if (!trainData) { alert('1단계: 데이터 나누기를 먼저 실행해주세요.'); return; }
+    const means = [ trainData.X.reduce((a, b) => a + b[0], 0) / trainData.X.length, trainData.X.reduce((a, b) => a + b[1], 0) / trainData.X.length ];
+    const stds = [ Math.sqrt(trainData.X.reduce((a, b) => a + Math.pow(b[0] - means[0], 2), 0) / trainData.X.length), Math.sqrt(trainData.X.reduce((a, b) => a + Math.pow(b[1] - means[1], 2), 0) / trainData.X.length) ];
+    const scale = (data) => data.map(point => [(point[0] - means[0]) / stds[0], (point[1] - means[1]) / stds[1]]);
+    scaledTrainData = { X: scale(trainData.X), y: trainData.y };
+    scaledTestData = { X: scale(testData.X), y: testData.y };
+    const originalPoints = trainData.X.concat(testData.X).map(d => ({x: d[0], y: d[1]}));
+    const scaledPoints = scaledTrainData.X.concat(scaledTestData.X).map(d => ({x: d[0], y: d[1]}));
+    const config = {
+        type: 'scatter',
+        data: {
+            datasets: [
+                { label: '스케일링 전 (Original)', data: originalPoints, backgroundColor: colors.unlabeled },
+                { label: '스케일링 후 (Scaled)', data: scaledPoints, backgroundColor: colors.train }
+            ]
+        },
+        options: { plugins: { title: { display: true, text: '스케일링 전/후 분포 비교' } }, scales: { x: { title: { display: true, text: 'Feature 1' } }, y: { title: { display: true, text: 'Feature 2' } } } } // Corrected: Removed trailing comma
+    };
+    createOrUpdateChart('scalingChart', config, false);
+}
+
+// --- Model Training (Step 3) ---
+function initializeTraining() {
+    if (!scaledTrainData) { alert('2단계: 단위 맞추기를 먼저 실행해주세요.'); return; }
+
+    trainingState = {
+        w1: Math.random() - 0.5, // slope
+        w2: Math.random() - 0.5, // slope for y-axis
+        b: Math.random() - 0.5,  // intercept
+        learningRate: 0.1,
+        iteration: 0,
+        lossHistory: []
+    };
+
+    ['training-step-btn', 'training-step-100-btn', 'training-step-1000-btn'].forEach(id => document.getElementById(id).disabled = false);
+    runTrainingStep(1, false); // Initial draw without updating parameters
+}
+
+function runTrainingStep(iterations = 1, update = true) {
+    if (trainingState.w1 === undefined) { alert('1. 학습 시작/리셋 버튼을 먼저 눌러주세요.'); return; }
+
+    for (let i = 0; i < iterations; i++) {
+        const { w1, w2, b, learningRate } = trainingState;
+        const X = scaledTrainData.X;
+        const y = scaledTrainData.y;
+        let total_loss = 0, grad_w1 = 0, grad_w2 = 0, grad_b = 0;
+
+        for (let j = 0; j < X.length; j++) {
+            const x1 = X[j][0], x2 = X[j][1], actual_y = y[j];
+            const z = w1 * x1 + w2 * x2 + b;
+            const pred_y = 1 / (1 + Math.exp(-z)); // Sigmoid
+            
+            const error = pred_y - actual_y;
+            grad_w1 += error * x1;
+            grad_w2 += error * x2;
+            grad_b += error;
+
+            total_loss += - (actual_y * Math.log(pred_y) + (1 - actual_y) * Math.log(1 - pred_y)); // Log Loss
+        }
+
+        if (update) {
+            trainingState.w1 -= learningRate * (grad_w1 / X.length);
+            trainingState.w2 -= learningRate * (grad_w2 / X.length);
+            trainingState.b -= learningRate * (grad_b / X.length);
+            trainingState.iteration++;
+            trainingState.lossHistory.push({x: trainingState.iteration, y: total_loss / X.length});
+        }
+    }
+
+    drawTrainingCharts();
+}
+
+function drawTrainingCharts() {
+    const { w1, w2, b, iteration, lossHistory } = trainingState;
+    document.getElementById('training-step-info').textContent = `Iteration: ${iteration}, Loss: ${lossHistory.length > 0 ? lossHistory[lossHistory.length-1].y.toFixed(4) : 'N/A'}`;
+
+    // Decision Boundary Chart
+    const class0_points = scaledTrainData.X.filter((_, i) => scaledTrainData.y[i] === 0).map(d => ({x: d[0], y: d[1]}));
+    const class1_points = scaledTrainData.X.filter((_, i) => scaledTrainData.y[i] === 1).map(d => ({x: d[0], y: d[1]}));
+    
+    const x_vals = [-3, 3];
+    const y_vals = x_vals.map(x => (-w1 * x - b) / w2);
+    const boundary = [{x: x_vals[0], y: y_vals[0]}, {x: x_vals[1], y: y_vals[1]}];
+
+    const modelConfig = {
+        type: 'scatter',
+        data: {
+            datasets: [
+                { label: 'Class 0', data: class0_points, backgroundColor: colors.class0 },
+                { label: 'Class 1', data: class1_points, backgroundColor: colors.class1 },
+                { label: 'Decision Boundary', data: boundary, type: 'line', borderColor: 'black', borderWidth: 2, fill: false, pointRadius: 0 }
+            ]
+        }
+    };
+    createOrUpdateChart('modelChart', modelConfig, true);
+
+    // Loss Chart
+    const lossConfig = {
+        type: 'line',
+        data: {
+            datasets: [{
+                label: 'Model Loss',
+                data: lossHistory,
+                borderColor: '#e74c3c',
+                fill: false
+            }]
+        },
+        options: { 
+            scales: { 
+                x: { type: 'linear', title: { display: true, text: 'Iteration' } }, 
+                y: { title: { display: true, text: 'Loss' }, beginAtZero: true } 
+            } 
+        }
+    };
+    createOrUpdateChart('lossChart', lossConfig, true);
+    model = {w1, w2, b}; // Save final model
+}
+
+// --- Evaluation (Step 4) ---
+let rocData = [], prData = [];
+
+function runEvaluation() {
+    if (!model || model.w1 === undefined) { alert('3단계: 모델 학습을 먼저 완료해주세요.'); return; }
+
+    const decisionFunction = (x) => model.w1 * x[0] + model.w2 * x[1] + model.b;
+    const sigmoid = (z) => 1 / (1 + Math.exp(-z));
+    probs = scaledTestData.X.map(x => sigmoid(decisionFunction(x)));
+    
+    const actual_pos = scaledTestData.y.filter(y => y === 1).length;
+    const actual_neg = scaledTestData.y.length - actual_pos;
+
+    if (actual_pos === 0 || actual_neg === 0) {
+        const errorMessage = '평가 데이터에 한 종류의 클래스만 존재하여\n평가를 진행할 수 없습니다.\n[데이터 비율 맞춰 나누기]를 사용해보세요.';
+        [ 'rocChart', 'evaluationChart', 'prChart'].forEach(id => {
+            if (!document.getElementById(id)) return;
+            const placeholderConfig = (text) => ({ type: 'bar', data: { labels: ['오류'], datasets: [{ data: [1] }] }, options: { plugins: { title: { display: true, text: text, font: {size: 14} } } } });
+            createOrUpdateChart(id, placeholderConfig(errorMessage), false);
+        });
+        document.getElementById('confusionMatrix').innerHTML = `<p style="text-align:center; color:red;">${errorMessage.replace(/\n/g, '<br>')}</p>`;
+        document.getElementById('confusionMatrix').style.display = 'block';
+        return;
+    }
+
+    rocData = [];
+    prData = [];
+    const thresholds = Array.from({length: 101}, (_, i) => i / 100).reverse();
+    thresholds.forEach(t => {
+        let tp = 0, fp = 0;
+        probs.forEach((prob, i) => {
+            const pred = prob >= t ? 1 : 0;
+            if (pred === 1 && scaledTestData.y[i] === 1) tp++;
+            else if (pred === 1 && scaledTestData.y[i] === 0) fp++;
+        });
+        const recall = actual_pos > 0 ? tp / actual_pos : 0;
+        const fpr = actual_neg > 0 ? fp / actual_neg : 0;
+        const precision = (tp + fp) > 0 ? tp / (tp + fp) : 0;
+        
+        rocData.push({ x: fpr, y: recall });
+        if (recall > 0 || precision > 0) prData.push({ x: recall, y: precision });
+    });
+    
+    rocData.sort((a,b) => a.x - b.x);
+    prData.sort((a,b) => a.x - b.x);
+    rocData = rocData.filter((p, i) => i === 0 || p.x !== rocData[i-1].x || p.y !== rocData[i-1].y);
+
+    // ROC Curve
+    const rocConfig = {
+        type: 'line',
+        data: { datasets: [
+            { type: 'line', label: `ROC Curve (AUC = ${calculateAuc(rocData).toFixed(3)})`, data: rocData, borderColor: colors.class1, fill: false, showLine: true },
+            { type: 'line', label: 'Random Guess', data: [{x:0, y:0}, {x:1, y:1}], borderColor: 'grey', borderDash: [5, 5], pointRadius: 0, showLine: true },
+            { type: 'scatter', label: '현재 기준점', data: [], backgroundColor: 'red', pointRadius: 8, z: 10 }
+        ]},
+        options: { scales: { x: { type: 'linear', position: 'bottom', title: { display: true, text: 'False Positive Rate' }, min: 0, max: 1 }, y: { type: 'linear', title: { display: true, text: 'True Positive Rate' }, min: 0, max: 1 } } } // Corrected: Removed trailing comma
+    };
+    createOrUpdateChart('rocChart', rocConfig, false);
+
+    // PR Curve
+    const prConfig = {
+        type: 'line',
+        data: { datasets: [
+            { type: 'line', label: `PR Curve (AUC = ${calculateAuc(prData).toFixed(3)})`, data: prData, borderColor: '#2ecc71', fill: false, showLine: true },
+            { type: 'scatter', label: '현재 기준점', data: [], backgroundColor: 'red', pointRadius: 8, z: 10 }
+        ]},
+        options: { scales: { x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Recall' }, min: 0, max: 1 }, y: { type: 'linear', title: { display: true, text: 'Precision' }, min: 0, max: 1 } } } // Corrected: Removed trailing comma
+    };
+    createOrUpdateChart('prChart', prConfig, false);
+
+    updateEvaluationViews(0.5, false);
+}
+
+function calculateAuc(data) {
+    let auc = 0;
+    for (let i = 1; i < data.length; i++) {
+        auc += (data[i].x - data[i - 1].x) * (data[i].y + data[i-1].y) / 2;
+    }
+    return auc;
+}
+
+function updateEvaluationViews(threshold, withAnimation = true) {
+    document.getElementById('thresholdValue').textContent = parseFloat(threshold).toFixed(2);
+    if (!probs) return; 
+    
+    updateEvaluationChart(threshold, withAnimation);
+
+    const actual_pos = scaledTestData.y.filter(y => y === 1).length;
+    const actual_neg = scaledTestData.y.length - actual_pos;
+    if (actual_pos === 0 || actual_neg === 0) return;
+
+    let tp = 0, fp = 0, tn = 0, fn = 0;
+    probs.forEach((prob, i) => {
+        const pred = prob >= threshold ? 1 : 0;
+        if (pred === 1 && scaledTestData.y[i] === 1) tp++;
+        else if (pred === 1 && scaledTestData.y[i] === 0) fp++;
+        else if (pred === 0 && scaledTestData.y[i] === 0) tn++;
+        else if (pred === 0 && scaledTestData.y[i] === 1) fn++;
+    });
+
+    const recall = actual_pos > 0 ? tp / actual_pos : 0;
+    const fpr = actual_neg > 0 ? fp / actual_neg : 0;
+    const precision = (tp + fp) > 0 ? tp / (tp + fp) : 0;
+    
+    if (charts['rocChart']) {
+        charts['rocChart'].data.datasets[2].data = [{x: fpr, y: recall}];
+        charts['rocChart'].update();
+    }
+    if (charts['prChart']) {
+        charts['prChart'].data.datasets[1].data = [{x: recall, y: precision}];
+        charts['prChart'].update();
+    }
+
+    const matrixHtml = `
+        <h4 style="margin-top:0; border:none; text-align:left;">Confusion Matrix (기준=${threshold})</h4>
+        <table class="results-table">
+            <thead>
+                <tr><th></th><th class="cm-header">Predicted: 0</th><th class="cm-header">Predicted: 1</th></tr>
+            </thead>
+            <tbody>
+                <tr><th class="cm-header">Actual: 0</th><td>${tn} (TN)</td><td>${fp} (FP)</td></tr>
+                <tr><th class="cm-header">Actual: 1</th><td>${fn} (FN)</td><td>${tp} (TP)</td></tr>
+            </tbody>
+        </table>
+        <br>
+        <h4 style="margin-top:0; border:none; text-align:left;">Classification Report</h4>
+        <table class="results-table">
+            <thead>
+                <tr><th>Metric</th><th>Score</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Precision (정밀도)</td><td>${precision.toFixed(3)}</td></tr>
+                <tr><td>Recall (재현율)</td><td>${recall.toFixed(3)}</td></tr>
+                <tr><td>F1-Score</td><td>${((precision + recall) > 0 ? 2 * (precision * recall) / (precision + recall) : 0).toFixed(3)}</td></tr>
+            </tbody>
+        </table>
+    `;
+    const matrixDiv = document.getElementById('confusionMatrix');
+    matrixDiv.innerHTML = matrixHtml;
+    matrixDiv.style.display = 'block';
+}
+
+function updateEvaluationChart(threshold, withAnimation = true) {
+    if (!scaledTestData || !model || !probs) return;
+
+    const datasets = {
+        tp: { label: 'TP (맞춘 Positive)', data: [], backgroundColor: colors.tp, pointStyle: 'circle', radius: 6 },
+        tn: { label: 'TN (맞춘 Negative)', data: [], backgroundColor: colors.tn, pointStyle: 'circle', radius: 6 },
+        fp: { label: 'FP (틀린 Positive)', data: [], backgroundColor: colors.fp, pointStyle: 'crossRot', radius: 7, borderWidth: 2, borderColor: colors.tn },
+        fn: { label: 'FN (틀린 Negative)', data: [], backgroundColor: colors.fn, pointStyle: 'crossRot', radius: 7, borderWidth: 2, borderColor: colors.tp }
+    };
+
+    scaledTestData.X.forEach((point, i) => {
+        const pred = probs[i] >= threshold ? 1 : 0;
+        const actual = scaledTestData.y[i];
+        const dataPoint = {x: point[0], y: point[1]};
+        if (pred === 1 && actual === 1) datasets.tp.data.push(dataPoint);
+        else if (pred === 0 && actual === 0) datasets.tn.data.push(dataPoint);
+        else if (pred === 1 && actual === 0) datasets.fp.data.push(dataPoint);
+        else if (pred === 0 && actual === 1) datasets.fn.data.push(dataPoint);
+    });
+
+    const boundary = scaledTestData.X.map(p => ({ x: p[0], y: (-model.w1 * p[0] - model.b) / model.w2 }));
+    
+    let threshold_boundary = [];
+    if (threshold > 0 && threshold < 1) {
+        const threshold_offset = Math.log(threshold / (1 - threshold));
+        threshold_boundary = scaledTestData.X.map(p => ({ x: p[0], y: (-model.w1 * p[0] - model.b + threshold_offset) / model.w2 }));
+    }
+
+    const evalConfig = {
+        type: 'scatter',
+        data: { datasets: [ 
+            datasets.tp, datasets.tn, datasets.fp, datasets.fn, 
+            { label: 'Decision Boundary (p=0.5)', data: boundary, type: 'line', borderColor: 'black', borderWidth: 2, fill: false, pointRadius: 0 },
+            { label: `Threshold Boundary (p=${threshold})`, data: threshold_boundary, type: 'line', borderColor: '#e67e22', borderDash: [5,5], borderWidth: 2, fill: false, pointRadius: 0 }
+        ] },
+        options: { plugins: { legend: { display: true } } } // Corrected: Removed trailing comma
+    };
+    createOrUpdateChart('evaluationChart', evalConfig, withAnimation);
+}
+
+function runPca() {
+    document.getElementById('pcaBeforeChart').innerHTML = ''; // Clear placeholder
+
+    const data3d = [];
+    for (let i = 0; i < 100; i++) { 
+        const r1 = Math.random() - 0.5;
+        const r2 = Math.random() - 0.5;
+        data3d.push({ x: 5 * r1 + 2 * r2, y: 2 * r1 - 1 * r2, z: 1.5 * r1 + 3 * r2 + (Math.random() - 0.5) });
+    }
+
+    // Plotly 3D Scatter
+    const trace = {
+        x: data3d.map(p => p.x),
+        y: data3d.map(p => p.y),
+        z: data3d.map(p => p.z),
+        mode: 'markers',
+        type: 'scatter3d',
+        marker: {
+            size: 4,
+            color: 'rgba(100, 100, 100, 0.7)',
+        }
+    };
+    const layout = {
+        title: '원본 3차원 데이터',
+        margin: { l: 0, r: 0, b: 0, t: 40 }
+    };
+    Plotly.newPlot('pcaBeforeChart', [trace], layout);
+
+    // Chart.js 2D Scatter for after
+    const data2d = data3d.map(p => ({ x: p.x, y: p.y }));
+    const configAfter = {
+        type: 'scatter',
+        data: { datasets: [{ label: 'PCA Result', data: data2d, backgroundColor: colors.train }] },
+        options: { 
+             plugins: { title: { display: true, text: '2차원으로 축소된 데이터' }}, // Corrected: Removed trailing comma
+             scales: { x: { title: {display: true, text: '주성분 1'}}, y: { title: {display: true, text: '주성분 2'}}} // Corrected: Removed trailing comma
+        }
+    };
+    createOrUpdateChart('pcaAfterChart', configAfter, false);
+}
+
+function initializeKMeans() {
+    const k = parseInt(document.getElementById('kValue').value);
+    const data = [];
+    const baseCenters = Array.from({length: k}, () => [Math.random() * 10, Math.random() * 10]);
+    for (let i = 0; i < 120; i++) { 
+        const center = baseCenters[i % k];
+        data.push({ x: center[0] + (Math.random() - 0.5) * 3, y: center[1] + (Math.random() - 0.5) * 3 });
+    }
+
+    kmeansState = {
+        k: k,
+        data: data,
+        centroids: data.slice(0, k).map(d => [d.x, d.y]),
+        assignments: new Array(data.length).fill(-1),
+        iteration: 0,
+        subStep: 'assign' // 'assign' or 'update'
+    };
+
+    document.getElementById('kmeans-step-btn').disabled = false;
+    document.getElementById('kmeans-step-info').textContent = '초기 상태. [다음 단계 실행] 버튼을 눌러 군집화를 시작하세요.';
+
+    drawKMeansChart();
+}
+
+function runKMeansStep() {
+    if (!kmeansState.data) {
+        alert('먼저 군집화를 시작해주세요.');
+        return;
+    }
+
+    const { subStep, iteration } = kmeansState;
+
+    if (subStep === 'assign') {
+        // Assignment step
+        let changed = false;
+        kmeansState.data.forEach((point, i) => {
+            let minDist = Infinity;
+            let bestCentroid = -1;
+            kmeansState.centroids.forEach((centroid, j) => {
+                const dist = Math.hypot(point.x - centroid[0], point.y - centroid[1]);
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestCentroid = j;
+                }
+            });
+            if (kmeansState.assignments[i] !== bestCentroid) {
+                changed = true;
+            }
+            kmeansState.assignments[i] = bestCentroid;
+        });
+
+        kmeansState.subStep = 'update';
+        document.getElementById('kmeans-step-info').textContent = `Iteration ${iteration + 1}: 점들을 가까운 중심에 할당했습니다. (다음: 중심점 업데이트)`;
+        if (!changed && iteration > 0) {
+            document.getElementById('kmeans-step-info').textContent = `Iteration ${iteration}: 수렴 완료! (클러스터 변경 없음)`;
+            document.getElementById('kmeans-step-btn').disabled = true;
+        }
+
+    } else { // 'update' subStep
+        const newCentroids = Array.from({length: kmeansState.k}, () => [0, 0]);
+        const counts = new Array(kmeansState.k).fill(0);
+        kmeansState.data.forEach((point, i) => {
+            const assignment = kmeansState.assignments[i];
+            if (assignment !== -1) {
+                newCentroids[assignment][0] += point.x;
+                newCentroids[assignment][1] += point.y;
+                counts[assignment]++;
+            }
+        });
+
+        kmeansState.centroids.forEach((currentCentroid, i) => {
+            if (counts[i] > 0) {
+                kmeansState.centroids[i] = [newCentroids[i][0] / counts[i], newCentroids[i][1] / counts[i]];
+            }
+        });
+
+        kmeansState.iteration++;
+        kmeansState.subStep = 'assign';
+        document.getElementById('kmeans-step-info').textContent = `Iteration ${kmeansState.iteration}: 중심점을 업데이트했습니다. (다음: 점 할당)`;
+    }
+
+    drawKMeansChart();
+}
+
+function drawKMeansChart() {
+    const { data, assignments, centroids, k } = kmeansState;
+    const clusterColors = [colors.class0, colors.class1, 'rgba(75, 192, 192, 0.7)', 'rgba(255, 159, 64, 0.7)'];
+    const pointColors = assignments.map(a => a === -1 ? colors.unlabeled : clusterColors[a % clusterColors.length]);
+
+    const config = {
+        type: 'scatter',
+        data: {
+            datasets: [
+                {
+                    label: '데이터 포인트',
+                    data: data,
+                    backgroundColor: pointColors,
+                    pointStyle: 'circle'
+                },
+                {
+                    label: '그룹의 중심점',
+                    data: centroids.map(c => ({x: c[0], y: c[1]})),
+                    backgroundColor: colors.centroid,
+                    borderColor: 'black',
+                    borderWidth: 2,
+                    pointStyle: 'star',
+                    radius: 12
+                }
+            ]
+        },
+        options: { plugins: { title: { display: true, text: `K-Means 군집화 (Iteration: ${kmeansState.iteration})` }}} // Corrected: Removed trailing comma
+    };
+
+    createOrUpdateChart('kmeansChart', config, false);
+}
+
+
+window.onload = () => {
+    const placeholderConfig = (text) => ({
+        type: 'bar', 
+        data: { labels: ['버튼을 눌러 시작하세요'], datasets: [{ data: [1], backgroundColor: '#ecf0f1' }] },
+        options: { plugins: { title: { display: true, text: text, font: { size: 16 } } } } // Corrected: Removed trailing comma
+    });
+    [ 'splitChart', 'scalingChart', 'modelChart', 'lossChart', 'evaluationChart', 'rocChart', 'prChart', 'pcaAfterChart', 'kmeansChart'].forEach(id => {
+        if(document.getElementById(id)) createOrUpdateChart(id, placeholderConfig(''), false);
+    });
+    // Placeholder for plotly
+    const pcaPlaceholder = document.getElementById('pcaBeforeChart');
+    if (pcaPlaceholder) {
+        pcaPlaceholder.innerHTML = '<div style="display: flex; justify-content: center; align-items: center; height: 100%; color: #aaa; font-size: 16px;">버튼을 눌러 시작하세요</div>';
+    }
+};
+</script>
+
+</body>
+</html>

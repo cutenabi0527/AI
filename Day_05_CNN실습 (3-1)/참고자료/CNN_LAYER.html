@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Mini CNN — 입력 → CONV(stride/pad) → POOL (행 단위 컨트롤 & 컴팩트 셀)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --gap:4px;        /* grid gap */
+    --cell:20px;      /* 셀 외곽 크기(테두리 포함) — 절반으로 축소 */
+    --blue:#2563eb; --rose:#e11d48;
+  }
+  *{ box-sizing:border-box; }
+  body{ background:#f8fafc; color:#0f172a; }
+  .card{ background:#fff; border:1px solid #e2e8f0; border-radius:.8rem; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .mini .btn, .mini input, .mini select{ height:28px; padding:.05rem .35rem; font-size:11px; }
+  .btn{ border:1px solid #cbd5e1; background:#fff; padding:.3rem .5rem; border-radius:.6rem; }
+  .btn-primary{ border-color:#bfdbfe; background:#eff6ff; color:#1d4ed8; }
+  .chip{ font-size:11px; padding:.05rem .35rem; border:1px solid #cbd5e1; border-radius:.5rem; background:#fff; color:#334155; }
+  .legend{ font-size:11px; color:#64748b; }
+  .title{ font-weight:600; font-size:14px; }
+  .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+
+  .grid-matrix{ display:grid; gap:var(--gap); }
+  .cell{
+    width:var(--cell); height:var(--cell);
+    display:flex; align-items:center; justify-content:center;
+    border:1px solid #e2e8f0; border-radius:.35rem; background:#fff;
+    font-variant-numeric:tabular-nums; font-size:11px; line-height:1;
+  }
+  .cell.pad{ background:#f1f5f9; color:#94a3b8; }
+  .cell.out{ background:#f8fafc; }
+
+  /* 변경 1: z-index 추가하여 하이라이트를 항상 위로 */
+  .hl{
+    position:absolute; pointer-events:none;
+    border:2px solid var(--blue); border-radius:.45rem;
+    box-shadow:0 0 0 3px rgba(37,99,235,.15);
+    transition:transform .12s;
+    z-index: 10;
+    top:0; left:0;
+  }
+  .hl.pool{ border-color:var(--rose); box-shadow:0 0 0 3px rgba(225,17,72,.15); }
+  .pulse{ animation:pulse .45s ease-out; }
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(37,99,235,.25);}100%{box-shadow:0 0 0 12px rgba(37,99,235,0);}}
+</style>
+</head>
+<body>
+<div class="max-w-[1200px] mx-auto p-3">
+
+  <div class="card mini p-2 mb-3 space-y-2">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1" title="입력 텐서 크기와 채널 수">
+      <span class="chip">입력(H×W×C)</span>
+      H<input id="inpH" type="number" min="3" max="12" value="5" class="w-14 border rounded px-2"><span class="legend mr-2">(높이)</span>
+      W<input id="inpW" type="number" min="3" max="12" value="5" class="w-14 border rounded px-2"><span class="legend mr-2">(너비)</span>
+      C<input id="inpC" type="number" min="1" max="6" value="2" class="w-12 border rounded px-2"><span class="legend mr-2">(채널)</span>
+      <button id="btnGenInput" class="btn" title="입력 값을 0~9 무작위로 생성">🎲<span class="hidden sm:inline ml-1">입력값 재생성</span></button>
+      <span class="legend">| 입력은 0~9 무작위 정수</span>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1" title="합성곱: 특징을 뽑기 위한 연산 (출력 채널 수 = 커널 개수)">
+      <span class="chip">CONV(특징 추출)</span>
+      K<input id="convK" type="number" min="1" max="7" value="3" class="w-12 border rounded px-2"><span class="legend mr-2">(커널)</span>
+      S<input id="convS" type="number" min="1" max="4" value="1" class="w-12 border rounded px-2"><span class="legend mr-2">(보폭)</span>
+      P<input id="convP" type="number" min="0" max="4" value="0" class="w-12 border rounded px-2"><span class="legend mr-2">(패딩)</span>
+      M<input id="convM" type="number" min="1" max="8" value="3" class="w-12 border rounded px-2"><span class="legend mr-2">(출력 채널)</span>
+      b<input id="convBias" type="number" step="1" value="0" class="w-12 border rounded px-2"><span class="legend mr-2">(편향)</span>
+      <button id="btnGenKernels" class="btn" title="커널 가중치(-1/0/1) 무작위 생성">🎲<span class="hidden sm:inline ml-1">커널값 재생성</span></button>
+      <span id="convChip" class="chip"></span>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1" title="Pooling: 공간 크기를 줄이고 중요한 응답을 요약">
+      <span class="chip">POOL(요약/다운샘플)</span>
+      <span class="legend">방식:</span>
+      <select id="poolType" class="border rounded px-2" title="Max: 최댓값, Avg: 평균">
+        <option value="max">Max</option><option value="avg">Avg</option>
+      </select>
+      Kp<input id="poolK" type="number" min="1" max="7" value="2" class="w-12 border rounded px-2"><span class="legend mr-2">(윈도우)</span>
+      Sp<input id="poolS" type="number" min="1" max="7" value="2" class="w-12 border rounded px-2"><span class="legend mr-2">(보폭)</span>
+      <span id="poolChip" class="chip"></span>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2 justify-end">
+      <button id="btnBuild" class="btn">🧱 준비</button>
+      <button id="btnPlay" class="btn btn-primary">▶</button>
+      <button id="btnPause" class="btn">⏸</button>
+      <button id="btnStep" class="btn">⏭</button>
+      <button id="btnReset" class="btn">↺</button>
+      <span class="chip">속도</span>
+      <input id="speed" type="range" min="0.3" max="2.0" step="0.1" value="1.0" class="w-28">
+      <span id="speedLbl" class="legend w-12 text-center">1.0×</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-[1fr_auto_1fr_auto_1fr] gap-3">
+    <div class="card p-3">
+      <div class="flex items-center justify-between mb-1">
+        <span class="title">입력(패딩 반영)</span>
+        <span id="inputShape" class="chip"></span>
+      </div>
+      <div class="legend mb-2">회색 = Padding(0). CONV가 이 패딩까지 포함해 패치를 읽습니다.</div>
+      <div id="InputsArea" class="overflow-x-auto"></div>
+    </div>
+    
+    <div class="hidden xl:flex items-center justify-center text-3xl font-light text-slate-300">→</div>
+
+    <div class="card p-3">
+      <div class="flex items-center justify-between mb-1">
+        <span class="title">CONV 출력</span>
+        <span id="convShape" class="chip"></span>
+      </div>
+      <div class="legend mb-2">각 출력 채널은 “커널×모든 입력채널 내적 + bias” 결과입니다.</div>
+      <div id="ConvArea" class="overflow-x-auto"></div>
+    </div>
+    
+    <div class="hidden xl:flex items-center justify-center text-3xl font-light text-slate-300">→</div>
+
+    <div class="card p-3">
+      <div class="flex items-center justify-between mb-1">
+        <span class="title">POOL 출력</span>
+        <span id="poolShape" class="chip"></span>
+      </div>
+      <div class="legend mb-2">Max는 최대값, Avg는 평균으로 요약해 해상도를 줄입니다.</div>
+      <div id="PoolArea" class="overflow-x-auto"></div>
+    </div>
+  </div>
+
+  <div class="card p-3 mt-3">
+    <div class="title mb-1">계산 로그</div>
+    <div id="mathPanel" class="mono text-xs bg-slate-50 border rounded p-2">
+      <div class="legend">파라미터를 정하고 <b>🧱 준비</b> → ▶/⏭ 로 진행하세요.</div>
+    </div>
+  </div>
+
+  <div class="card p-3 mt-3">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="title">CONV 커널 보기</span>
+          <span class="legend">oc: 출력채널 · ic: 입력채널</span>
+          oc<input id="kvOc" type="number" min="1" value="1" class="w-14 border rounded px-2 mini">
+          ic<input id="kvIc" type="number" min="1" value="1" class="w-14 border rounded px-2 mini">
+          <button id="btnShowKernel" class="btn mini">보기</button>
+        </div>
+        <div id="KernelView"></div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="title">POOL 윈도우</span>
+        </div>
+        <div id="PoolKernelView"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ===== Helpers ===== */
+const rndInt = (a,b)=> Math.floor(Math.random()*(b-a+1))+a;
+const choice = arr => arr[Math.floor(Math.random()*arr.length)];
+const byId = id => document.getElementById(id);
+
+/* ===== Render utils ===== */
+function renderMatrix(container, mat, {idPrefix="", padMask=null, title=""}={}){
+  const H=mat.length, W=mat[0].length;
+  const wrap= document.createElement('div'); wrap.className='inline-block mr-4 align-top';
+  if(title){ const t=document.createElement('div'); t.className='legend mb-1'; t.textContent=title; wrap.appendChild(t); }
+  const rel = document.createElement('div'); rel.className='relative inline-block';
+  const grid= document.createElement('div'); grid.className='grid-matrix'; grid.style.gridTemplateColumns=`repeat(${W}, var(--cell))`;
+  for(let r=0;r<H;r++){
+    for(let c=0;c<W;c++){
+      const v=mat[r][c], txt=(v===null||v===undefined)?' ':String(v);
+      const cell=document.createElement('div'); cell.className='cell'; cell.id=`${idPrefix}_${r}_${c}`;
+      if(padMask && padMask[r][c]) cell.classList.add('pad');
+      cell.textContent=txt; grid.appendChild(cell);
+    }
+  }
+  rel.appendChild(grid); wrap.appendChild(rel); container.appendChild(wrap);
+  return {wrap, rel, grid};
+}
+function updateCell(id,val){
+  const cell=byId(id); if(!cell) return;
+  cell.textContent=(val===null||val===undefined)?' ':String(val);
+  cell.classList.remove('pulse'); void cell.offsetWidth; cell.classList.add('pulse');
+}
+function addHL(rel,k,kind){
+  const hl=document.createElement('div'); hl.className=`hl ${kind==='pool'?'pool':''}`;
+  const cellPx=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cell'))||20;
+  const gapPx = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--gap'))||4;
+  const w = cellPx*k + gapPx*(k-1);
+  hl.style.width = w+'px'; hl.style.height = w+'px';
+  rel.appendChild(hl);
+  return hl;
+}
+function moveHLToCell(hl, cellEl, relEl){
+  if(!hl || !cellEl || !relEl) return;
+  const a = cellEl.getBoundingClientRect();
+  const b = relEl.getBoundingClientRect();
+  hl.style.transform = `translate(${a.left - b.left}px, ${a.top - b.top}px)`;
+}
+
+/* ===== State ===== */
+let H=5,W=5,Cin=2;
+let inputsRaw=[], inputsPad=[], padMask=[];
+let K=3,S=1,P=0,M=3,bias=0,kernels=[];
+let Ho=0,Wo=0, convOut=[];
+let poolType='max', Kp=2, Sp=2, Hp=0, Wp=0, poolOut=[];
+let inputViews=[], convViews=[], poolViews=[], convHLs=[], poolHLs=[];
+let steps=[], curIdx=0, playing=false, timer=null, spd=1.0;
+
+/* ===== DOM refs ===== */
+const inpH = byId('inpH'), inpW = byId('inpW'), inpC = byId('inpC');
+const btnGenInput = byId('btnGenInput');
+const convK = byId('convK'), convS = byId('convS'), convP = byId('convP'), convM = byId('convM'), convBias = byId('convBias');
+const btnGenKernels = byId('btnGenKernels');
+const poolTypeSel = byId('poolType'), poolK = byId('poolK'), poolS = byId('poolS');
+
+const btnBuild = byId('btnBuild'), btnPlay = byId('btnPlay'), btnPause = byId('btnPause'), btnStep = byId('btnStep'), btnReset = byId('btnReset');
+const speed = byId('speed'), speedLbl = byId('speedLbl');
+
+const mathPanel = byId('mathPanel');
+const InputsArea = byId('InputsArea'), ConvArea = byId('ConvArea'), PoolArea = byId('PoolArea');
+const inputShape = byId('inputShape'), convShape = byId('convShape'), poolShape = byId('poolShape');
+const convChip = byId('convChip'), poolChip = byId('poolChip');
+const kvOc = byId('kvOc'), kvIc = byId('kvIc'), btnShowKernel = byId('btnShowKernel'), KernelView = byId('KernelView'), PoolKernelView = byId('PoolKernelView');
+
+/* ===== Random Generators ===== */
+function genInputs(){ inputsRaw = Array.from({length:Cin}, ()=> Array.from({length:H},()=> Array.from({length:W},()=> rndInt(0,9)))); }
+function genKernels(){ const vals=[-1,0,1]; kernels = Array.from({length:M}, ()=> Array.from({length:Cin}, ()=> Array.from({length:K},()=> Array.from({length:K},()=> choice(vals))))); }
+
+/* ===== Padding & Shapes ===== */
+function applyPadding(inputs, p){
+  if(p===0){ padMask = Array.from({length:H},()=>Array(W).fill(false)); return inputs.map(ch=>ch.map(row=>row.slice())); }
+  const H2=H+2*p, W2=W+2*p;
+  padMask = Array.from({length:H2},(_,r)=> Array.from({length:W2},(_,c)=> (r<p || r>=H+p || c<p || c>=W+p)));
+  return inputs.map(ch=>{
+    const out=Array.from({length:H2},()=>Array(W2).fill(0));
+    for(let r=0;r<H;r++) for(let c=0;c<W;c++) out[r+p][c+p]=ch[r][c];
+    return out;
+  });
+}
+const convOutSize=(Hin,Win,K,S,P)=>{ const H2=Hin+2*P,W2=Win+2*P; return [Math.floor((H2-K)/S)+1, Math.floor((W2-K)/S)+1]; };
+const poolOutSize=(Hin,Win,Kp,Sp)=> [Math.floor((Hin-Kp)/Sp)+1, Math.floor((Win-Kp)/Sp)+1];
+
+/* ===== Math ===== */
+function dotBlock(a,b){ let s=0; const n=a.length; for(let i=0;i<n;i++) for(let j=0;j<n;j++) s+=a[i][j]*b[i][j]; return s; }
+function getPatch(mat, r0, c0, K){ const out=Array.from({length:K},()=>Array(K).fill(0)); for(let i=0;i<K;i++) for(let j=0;j<K;j++) out[i][j]=mat[r0+i][c0+j]; return out; }
+function convAt(oc, r, c){ const rr=r*S, cc=c*S; let sum=0; for(let ch=0; ch<Cin; ch++){ const patch=getPatch(inputsPad[ch], rr, cc, K); sum+=dotBlock(patch, kernels[oc][ch]); } return sum + bias; }
+function poolReduce(block,type){ const flat=block.flat(); if(type==='max') return Math.max(...flat); const s=flat.reduce((a,b)=>a+b,0); return Number((s/flat.length).toFixed(4)); }
+
+/* ===== Render ===== */
+function renderInputs(){
+  InputsArea.innerHTML=""; inputViews=[];
+  for(let ch=0; ch<Cin; ch++){
+    const v=renderMatrix(InputsArea, inputsPad[ch], {idPrefix:`I${ch}`, padMask, title:`입력 c=${ch+1}`});
+    inputViews.push(v);
+  }
+}
+function renderConvBlank(){
+  ConvArea.innerHTML=""; convViews=[];
+  for(let oc=0; oc<M; oc++){
+    const blank=Array.from({length:Ho},()=>Array(Wo).fill(null));
+    convOut[oc]=blank.map(r=>r.slice());
+    const v=renderMatrix(ConvArea, blank, {idPrefix:`O${oc}`, title:`Conv ch=${oc+1}`});
+    convViews.push(v);
+  }
+}
+function renderPoolBlank(){
+  PoolArea.innerHTML=""; poolViews=[];
+  for(let oc=0; oc<M; oc++){
+    const blank=Array.from({length:Hp},()=>Array(Wp).fill(null));
+    poolOut[oc]=blank.map(r=>r.slice());
+    const v=renderMatrix(PoolArea, blank, {idPrefix:`P${oc}`, title:`Pool ch=${oc+1}`});
+    poolViews.push(v);
+  }
+}
+function setupConvHLs(){ convHLs=[]; for(let ch=0; ch<Cin; ch++){ convHLs.push(addHL(inputViews[ch].rel, K, 'conv')); } }
+function setupPoolHLs(){ poolHLs=[]; for(let oc=0; oc<M; oc++){ poolHLs.push(addHL(convViews[oc].rel, Kp, 'pool')); } }
+
+/* ===== Kernel View ===== */
+function showConvKernel(oc1, ic1){
+  KernelView.innerHTML="";
+  const oc=oc1-1, ic=ic1-1;
+  if(!(kernels[oc] && kernels[oc][ic])){ KernelView.textContent="범위를 벗어났습니다."; return; }
+  renderMatrix(KernelView, kernels[oc][ic], {idPrefix:`K_${oc}_${ic}`, title:`K (oc=${oc1}, ic=${ic1})`});
+}
+function showPoolKernel(){
+  PoolKernelView.innerHTML="";
+  const demo=Array.from({length:Kp},()=>Array(Kp).fill('·'));
+  renderMatrix(PoolKernelView, demo, {idPrefix:`PW`, title:`윈도우 Kp=${Kp}, Sp=${Sp}`});
+}
+
+/* ===== Steps ===== */
+function buildSteps(){
+  steps=[];
+  for(let oc=0; oc<M; oc++) for(let r=0;r<Ho;r++) for(let c=0;c<Wo;c++) steps.push({phase:'conv', oc, r, c});
+  for(let oc=0; oc<M; oc++) for(let r=0;r<Hp;r++) for(let c=0;c<Wp;c++) steps.push({phase:'pool', oc, r, c});
+  curIdx=0;
+}
+function doOneStep(){
+  if(curIdx>=steps.length){ mathPanel.innerHTML="<div>완료되었습니다.</div>"; return; }
+  const s=steps[curIdx];
+  if(s.phase==='conv'){
+    const val=convAt(s.oc,s.r,s.c);
+    convOut[s.oc][s.r][s.c]=val;
+    updateCell(`O${s.oc}_${s.r}_${s.c}`, val);
+
+    const rr=s.r*S, cc=s.c*S;
+    for(let ch=0; ch<Cin; ch++){
+      const cellEl = byId(`I${ch}_${rr}_${cc}`);
+      if(cellEl) moveHLToCell(convHLs[ch], cellEl, inputViews[ch].rel);
+    }
+
+    let sumNoBias=0, terms=[];
+    for(let ch=0; ch<Cin; ch++){
+      const d=dotBlock(getPatch(inputsPad[ch], rr, cc, K), kernels[s.oc][ch]);
+      sumNoBias+=d; terms.push(`ic${ch+1}:${d}`);
+    }
+    mathPanel.innerHTML = `
+      <div>CONV — oc=${s.oc+1}, (r,c)=(${s.r},${s.c}) → <b>${sumNoBias}+b(${bias})=${sumNoBias+bias}</b></div>
+      <div class="legend">패치 좌상단=(${rr},${cc}), K=${K}, S=${S}, P=${P} · ${terms.join('  ')}</div>`;
+  }else{
+    const convR=s.r*Sp, convC=s.c*Sp;
+    const block=[]; for(let i=0;i<Kp;i++){ const row=[]; for(let j=0;j<Kp;j++){ row.push(convOut[s.oc][convR+i]?.[convC+j] ?? 0); } block.push(row); }
+    const v=poolReduce(block, poolType);
+    poolOut[s.oc][s.r][s.c]=v;
+    updateCell(`P${s.oc}_${s.r}_${s.c}`, v);
+
+    const startCell = byId(`O${s.oc}_${convR}_${convC}`);
+    if(startCell) moveHLToCell(poolHLs[s.oc], startCell, convViews[s.oc].rel);
+
+    const pretty=(m)=>`[[${m.map(r=>r.join(', ')).join('], [')}]]`;
+    mathPanel.innerHTML = `
+      <div>POOL — oc=${s.oc+1}, out(r,c)=(${s.r},${s.c}) (conv좌표 시작=${convR},${convC})</div>
+      <div class="legend">${poolType.toUpperCase()} · Kp=${Kp}, Sp=${Sp} · 블록=${pretty(block)} → <b>${v}</b></div>`;
+  }
+  curIdx++;
+}
+
+/* ===== Runner ===== */
+function playLoop(){ clearInterval(timer); timer=setInterval(()=>{ doOneStep(); if(curIdx>=steps.length){playing=false; clearInterval(timer);} }, 420/spd); }
+
+/* ===== UI Wire ===== */
+function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
+function updateChips(Hpad,Wpad){
+  inputShape.textContent = `${Hpad}×${Wpad}×${Cin}`;
+  convShape.textContent  = `${Ho}×${Wo}×${M}`;
+  poolShape.textContent  = `${Hp}×${Wp}×${M}`;
+  convChip.textContent = `K=${K}, S=${S}, P=${P}, b=${bias}`;
+  poolChip.textContent = `type=${poolType.toUpperCase()}, Kp=${Kp}, Sp=${Sp}`;
+}
+function prepare(){
+  H=clamp(+inpH.value,3,12); W=clamp(+inpW.value,3,12); Cin=clamp(+inpC.value,1,6);
+  K=clamp(+convK.value,1,7); S=clamp(+convS.value,1,4); P=clamp(+convP.value,0,4);
+  M=clamp(+convM.value,1,8); bias=+convBias.value||0;
+  poolType=poolTypeSel.value; Kp=clamp(+poolK.value,1,7); Sp=clamp(+poolS.value,1,7);
+
+  if(inputsRaw.length!==Cin || inputsRaw[0]?.length!==H || inputsRaw[0]?.[0]?.length!==W) genInputs();
+  if(kernels.length!==M || kernels[0]?.length!==Cin || kernels[0]?.[0]?.length!==K) genKernels();
+
+  inputsPad = applyPadding(inputsRaw, P);
+  const Hpad=inputsPad[0].length, Wpad=inputsPad[0][0].length;
+  [Ho,Wo] = convOutSize(H, W, K, S, P);
+  if(Ho<=0||Wo<=0){ alert("Conv 출력 크기가 0입니다. K/S/P를 조정하세요."); return false; }
+  [Hp,Wp] = poolOutSize(Ho, Wo, Kp, Sp);
+
+  renderInputs(); renderConvBlank(); renderPoolBlank();
+  setupConvHLs(); setupPoolHLs();
+  
+  // 변경 3: '준비' 시점에 하이라이트 위치 초기화
+  for (let ch = 0; ch < Cin; ch++) {
+    const firstCell = byId(`I${ch}_0_0`);
+    if (firstCell && convHLs[ch]) {
+      moveHLToCell(convHLs[ch], firstCell, inputViews[ch].rel);
+    }
+  }
+  for (let oc = 0; oc < M; oc++) {
+    const firstCell = byId(`O${oc}_0_0`);
+    if (firstCell && poolHLs[oc]) {
+      moveHLToCell(poolHLs[oc], firstCell, convViews[oc].rel);
+    }
+  }
+
+  updateChips(Hpad,Wpad);
+  showConvKernel(1,1); showPoolKernel();
+
+  steps=[]; buildSteps(); curIdx=0;
+  mathPanel.innerHTML = `<div class="legend">빈 행렬 준비 완료. ▶/⏭ 로 진행하세요.</div>`;
+  return true;
+}
+
+/* Buttons */
+btnGenInput.onclick = ()=>{ H=clamp(+inpH.value,3,12); W=clamp(+inpW.value,3,12); Cin=clamp(+inpC.value,1,6); genInputs(); mathPanel.innerHTML="<div>입력을 재생성했습니다. <b>준비</b>를 눌러주세요.</div>"; };
+btnGenKernels.onclick = ()=>{ K=clamp(+convK.value,1,7); S=clamp(+convS.value,1,4); P=clamp(+convP.value,0,4); M=clamp(+convM.value,1,8); bias=+convBias.value||0; genKernels(); mathPanel.innerHTML="<div>커널을 재생성했습니다. <b>준비</b>를 눌러주세요.</div>"; };
+
+btnBuild.onclick = ()=>{ prepare(); };
+btnReset.onclick = ()=>{ playing=false; clearInterval(timer); steps=[]; curIdx=0; mathPanel.innerHTML="<div>Reset 완료. <b>준비</b>를 눌러주세요.</div>"; };
+btnStep.onclick = ()=>{ if(steps.length===0){ mathPanel.innerHTML="<div>먼저 <b>준비</b>를 눌러주세요.</div>"; return;} doOneStep(); };
+btnPlay.onclick = ()=>{ if(steps.length===0){ mathPanel.innerHTML="<div>먼저 <b>준비</b>를 눌러주세요.</div>"; return;} playing=true; playLoop(); };
+btnPause.onclick = ()=>{ playing=false; clearInterval(timer); };
+
+speed.oninput = ()=>{ spd=Number(speed.value); speedLbl.textContent=spd.toFixed(1)+"×"; if(playing) playLoop(); };
+poolTypeSel.onchange = ()=>{ poolType=poolTypeSel.value; showPoolKernel(); };
+poolK.onchange = ()=>{ Kp=clamp(+poolK.value,1,7); showPoolKernel(); };
+poolS.onchange = ()=>{ Sp=clamp(+poolS.value,1,7); showPoolKernel(); };
+btnShowKernel.onclick = ()=>{ showConvKernel(+kvOc.value, +kvIc.value); };
+
+/* Init */
+(function(){ genInputs(); genKernels(); showPoolKernel(); })();
+</script>
+</body>
+</html>
