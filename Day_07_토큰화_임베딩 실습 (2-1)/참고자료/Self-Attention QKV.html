@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Self-Attention 시각화 — QKV → QK 내적(성분별) → Softmax → V 가중합 (+Wide Cells & Multi-HL)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --cell:24px;        /* 일반 셀 한 변 */
+    --cell-wide:64px;   /* S/A/O용 가로 너비(요청: 더 넓게) */
+    --gap:4px;
+    --blue:#2563eb; --rose:#e11d48; --emerald:#059669;
+  }
+  *{box-sizing:border-box}
+  body{background:#f8fafc;color:#0f172a}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:.8rem;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .mini .btn,.mini input,.mini select{height:30px;padding:.15rem .45rem;font-size:12px}
+  .btn{border:1px solid #cbd5e1;background:#fff;padding:.35rem .6rem;border-radius:.6rem}
+  .btn-primary{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
+  .chip{font-size:11px;padding:.1rem .4rem;border:1px solid #cbd5e1;border-radius:.5rem;background:#fff;color:#334155}
+  .legend{font-size:11px;color:#64748b}
+  .title{font-weight:600;font-size:14px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  .grid-mat{display:grid;gap:var(--gap)}
+  .cell{
+    width:var(--cell); height:var(--cell);
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid #e2e8f0;border-radius:.35rem;background:#fff;
+    font-variant-numeric:tabular-nums; font-size:11px; line-height:1;
+  }
+  /* ✅ S/A/O는 가로만 넓히고, 세로는 동일(시선 일관성) */
+  .cell.wide{ width:var(--cell-wide); }
+
+  /* ✅ 하이라이트(컨테이너 기준 좌상단 고정) */
+  .hl{
+    position:absolute; top:0; left:0; pointer-events:none;
+    border:2px solid var(--blue); border-radius:.45rem;
+    box-shadow:0 0 0 4px rgba(37,99,235,.15);
+    transition:transform .12s;
+  }
+  .hl.alt{border-color:var(--rose);box-shadow:0 0 0 4px rgba(225,17,72,.15)}
+  .hl.green{border-color:var(--emerald);box-shadow:0 0 0 4px rgba(5,150,105,.15)}
+
+  .pulse{animation:pulse .45s ease-out}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(37,99,235,.25)}100%{box-shadow:0 0 0 12px rgba(37,99,235,0)}}
+</style>
+</head>
+<body>
+    
+<div class="max-w-[1280px] mx-auto p-3">
+    <h1 style="font-size:30px;"> SELF ATTENTION QKV 이해하기</h1>
+  <!-- 컨트롤 라인 -->
+  <div class="card mini p-2 mb-3 space-y-2">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="chip">입력 크기</span>
+      N<input id="nTok" type="number" min="2" max="10" value="4" class="w-16 border rounded px-2">
+      D<input id="dModel" type="number" min="2" max="10" value="4" class="w-16 border rounded px-2">
+      <span class="chip">투영 차원</span>
+      d<sub>k</sub><input id="dK" type="number" min="2" max="10" value="3" class="w-16 border rounded px-2">
+      d<sub>v</sub><input id="dV" type="number" min="2" max="10" value="3" class="w-16 border rounded px-2">
+      <button id="btnRandX" class="btn" title="입력 X 무작위 생성(0~9)">🎲 X</button>
+      <button id="btnRandW" class="btn" title="투영행렬 WQ/WK/WV 무작위 생성(-1,0,1)">🎲 W</button>
+      <span class="legend">단일-헤드 Self-Attention · scale = 1/√d<sub>k</sub></span>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 justify-end">
+      <button id="btnBuild" class="btn" title="빈 출력 및 뷰 초기화">🧱 준비</button>
+      <button id="btnPlay" class="btn btn-primary">▶</button>
+      <button id="btnPause" class="btn">⏸</button>
+      <button id="btnStep" class="btn">⏭</button>
+      <button id="btnUndo" class="btn" title="한 단계 되돌리기">⏮ Undo</button>
+      <button id="btnReset" class="btn">↺</button>
+      <span class="chip">속도</span>
+      <input id="speed" type="range" min="0.3" max="5.0" step="0.1" value="1.0" class="w-28">
+      <span id="speedLbl" class="legend w-12 text-center">1.0×</span>
+    </div>
+  </div>
+
+  <!-- 상단 3열: 입력/가중치/중간 결과 -->
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+    <!-- 입력 X & Q,K,V -->
+    <div class="card p-3">
+      <div class="flex items-center justify-between mb-1">
+        <span class="title">입력 X (N×D)</span>
+        <span id="shapeX" class="chip"></span>
+      </div>
+      <div id="XArea"></div>
+
+      <div class="mt-3 grid grid-cols-3 gap-2">
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="title">Q (N×d<sub>k</sub>)</span><span id="shapeQ" class="chip"></span>
+          </div>
+          <div id="QArea" class="mt-1"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="title">K (N×d<sub>k</sub>)</span><span id="shapeK" class="chip"></span>
+          </div>
+          <div id="KArea" class="mt-1"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="title">V (N×d<sub>v</sub>)</span><span id="shapeV" class="chip"></span>
+          </div>
+          <div id="VArea" class="mt-1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 투영행렬 WQ, WK, WV -->
+    <div class="card p-3">
+      <div class="title mb-1">투영 행렬</div>
+      <div class="legend mb-2">Q=XW<sub>Q</sub>, K=XW<sub>K</sub>, V=XW<sub>V</sub> (내적을 성분별로 누적 계산)</div>
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="chip">W<sub>Q</sub> (D×d<sub>k</sub>)</span><span id="shapeWQ" class="legend"></span>
+          </div>
+          <div id="WQArea" class="mt-1"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="chip">W<sub>K</sub> (D×d<sub>k</sub>)</span><span id="shapeWK" class="legend"></span>
+          </div>
+          <div id="WKArea" class="mt-1"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="chip">W<sub>V</sub> (D×d<sub>v</sub>)</span><span id="shapeWV" class="legend"></span>
+          </div>
+          <div id="WVArea" class="mt-1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 스코어/가중치/출력 (와이드) -->
+    <div class="card p-3">
+      <div class="flex items-center justify-between">
+        <span class="title">스코어 S = QKᵀ / √d<sub>k</sub> (N×N)</span><span id="shapeS" class="chip"></span>
+      </div>
+      <div id="SArea" class="mt-1"></div>
+
+      <div class="mt-3">
+        <div class="flex items-center justify-between">
+          <span class="title">가중치 A = softmax(S) (행 소프트맥스)</span><span id="shapeA" class="chip"></span>
+        </div>
+        <div id="AArea" class="mt-1"></div>
+      </div>
+
+      <div class="mt-3">
+        <div class="flex items-center justify-between">
+          <span class="title">출력 O = A·V (N×d<sub>v</sub>)</span><span id="shapeO" class="chip"></span>
+        </div>
+        <div id="OArea" class="mt-1"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 로그 -->
+  <div class="card p-3 mt-3">
+    <div class="title mb-1">계산 로그</div>
+    <div id="log" class="mono text-xs bg-slate-50 border rounded p-2">
+      <div class="legend">🧱 준비 → ▶/⏭ 로 진행하세요. ⏮ Undo로 한 단계씩 되돌릴 수 있습니다.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== Helpers ===== */
+const byId = id => document.getElementById(id);
+const rndInt = (a,b)=> Math.floor(Math.random()*(b-a+1))+a;
+const choice = arr => arr[Math.floor(Math.random()*arr.length)];
+function mat(H,W, fill=0){ return Array.from({length:H},()=> Array.from({length:W},()=> (typeof fill==='function'? fill(): fill))); }
+function zeros(H,W){ return mat(H,W,0); }
+
+function renderMatrix(container, M, {idPrefix="", wide=false}={}){
+  container.innerHTML="";
+  const H=M.length, W=M[0].length;
+  const wrap = document.createElement('div'); wrap.className='inline-block';
+  const rel  = document.createElement('div'); rel.className='relative inline-block';  /* position:relative */
+  const grid = document.createElement('div'); grid.className='grid-mat';
+  grid.style.gridTemplateColumns = `repeat(${W}, ${wide ? 'var(--cell-wide)' : 'var(--cell)'})`;
+  for(let r=0;r<H;r++){
+    for(let c=0;c<W;c++){
+      const d = document.createElement('div');
+      d.className = 'cell' + (wide?' wide':'');
+      d.id = `${idPrefix}_${r}_${c}`;
+      d.textContent = (M[r][c]===null||M[r][c]===undefined) ? ' ' : String(M[r][c]);
+      grid.appendChild(d);
+    }
+  }
+  rel.appendChild(grid); wrap.appendChild(rel); container.appendChild(wrap);
+  return {wrap, rel, grid};
+}
+function updateCell(id, val, pulse=true){
+  const el = byId(id); if(!el) return;
+  el.textContent = (val===null||val===undefined) ? ' ' :
+    (typeof val==='number' ? (Math.abs(val)>1e-6? String(Number(val.toFixed(5))) : '0') : String(val));
+  if(pulse){ el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse'); }
+}
+/* ✅ 행렬별 하이라이트 크기를 다르게(가로/세로) */
+function addHLRect(rel, widthPx, heightPx, cls=''){
+  const hl=document.createElement('div'); hl.className='hl '+cls;
+  hl.style.width=widthPx+'px'; hl.style.height=heightPx+'px';
+  rel.appendChild(hl); return hl;
+}
+function moveHLToCell(hl, cell, rel){
+  if(!hl || !cell || !rel) return;
+  const a = cell.getBoundingClientRect();
+  const b = rel.getBoundingClientRect();
+  hl.style.transform = `translate(${a.left-b.left}px, ${a.top-b.top}px)`;
+}
+function pxVar(name){ return parseInt(getComputedStyle(document.documentElement).getPropertyValue(name))||0; }
+const CELL  = ()=> pxVar('--cell');
+const WIDEW = ()=> pxVar('--cell-wide');
+
+/* ===== State ===== */
+let N=4, D=4, dK=3, dV=3;
+let X=[], WQ=[], WK=[], WV=[];
+let Q=[], K=[], V=[];
+let S=[], A=[], O=[];
+let views = {};
+let hlX=null, hlWQ=null, hlWK=null, hlWV=null, hlQ=null, hlK=null, hlS=null, hlA=null, hlV=null, hlO=null;
+let steps=[], cur=0, playing=false, timer=null, spd=1.0;
+let undoStack=[];
+
+/* ===== DOM ===== */
+const nTok=byId('nTok'), dModel=byId('dModel'), dKIn=byId('dK'), dVIn=byId('dV');
+const btnRandX=byId('btnRandX'), btnRandW=byId('btnRandW');
+const btnBuild=byId('btnBuild'), btnPlay=byId('btnPlay'), btnPause=byId('btnPause'),
+      btnStep=byId('btnStep'), btnUndo=byId('btnUndo'), btnReset=byId('btnReset');
+const speed=byId('speed'), speedLbl=byId('speedLbl');
+const log=byId('log');
+
+const XArea=byId('XArea'), QArea=byId('QArea'), KArea=byId('KArea'), VArea=byId('VArea');
+const WQArea=byId('WQArea'), WKArea=byId('WKArea'), WVArea=byId('WVArea');
+const SArea=byId('SArea'), AArea=byId('AArea'), OArea=byId('OArea');
+
+const shapeX=byId('shapeX'), shapeQ=byId('shapeQ'), shapeK=byId('shapeK'), shapeV=byId('shapeV');
+const shapeWQ=byId('shapeWQ'), shapeWK=byId('shapeWK'), shapeWV=byId('shapeWV');
+const shapeS=byId('shapeS'), shapeA=byId('shapeA'), shapeO=byId('shapeO');
+
+/* ===== Random Generators ===== */
+function genX(){ X = mat(N,D, ()=> rndInt(0,9)); }
+function genW(){
+  const vals=[-1,0,1];
+  WQ = mat(D, dK, ()=> choice(vals));
+  WK = mat(D, dK, ()=> choice(vals));
+  WV = mat(D, dV, ()=> choice(vals));
+}
+
+/* ===== Steps Build ===== */
+function buildSteps(){
+  steps=[];
+  // Q
+  for(let i=0;i<N;i++) for(let k=0;k<dK;k++) for(let t=0;t<D;t++) steps.push({phase:'Q', i,k,t});
+  // K
+  for(let i=0;i<N;i++) for(let k=0;k<dK;k++) for(let t=0;t<D;t++) steps.push({phase:'K', i,k,t});
+  // V
+  for(let i=0;i<N;i++) for(let v=0;v<dV;v++) for(let t=0;t<D;t++) steps.push({phase:'V', i, v, t});
+  // S
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++) for(let kk=0; kk<dK; kk++) steps.push({phase:'S', i,j, kk});
+  // softmax per row
+  for(let i=0;i<N;i++) steps.push({phase:'SOFTMAX_ROW', i});
+  // O = A·V
+  for(let i=0;i<N;i++) for(let c=0;c<dV;c++) for(let j=0;j<N;j++) steps.push({phase:'O', i,c,j});
+  cur=0;
+}
+
+/* ===== Rendering ===== */
+function renderAll(){
+  views.X = renderMatrix(XArea, X, {idPrefix:'X'});
+  views.WQ= renderMatrix(WQArea,WQ,{idPrefix:'WQ'});
+  views.WK= renderMatrix(WKArea,WK,{idPrefix:'WK'});
+  views.WV= renderMatrix(WVArea,WV,{idPrefix:'WV'});
+
+  views.Q = renderMatrix(QArea, Q, {idPrefix:'Q'});
+  views.K = renderMatrix(KArea, K, {idPrefix:'K'});
+  views.V = renderMatrix(VArea, V, {idPrefix:'V'});
+
+  /* ✅ S/A/O는 wide */
+  views.S = renderMatrix(SArea, S, {idPrefix:'S', wide:true});
+  views.A = renderMatrix(AArea, A, {idPrefix:'A', wide:true});
+  views.O = renderMatrix(OArea, O, {idPrefix:'O', wide:true});
+
+  /* ✅ HL 크기를 행렬별로 맞춤 (가로/세로) */
+  const h = CELL(), w = WIDEW();
+  hlX  = addHLRect(views.X.rel,  h, h, '');
+  hlWQ = addHLRect(views.WQ.rel, h, h, 'alt');
+  hlWK = addHLRect(views.WK.rel, h, h, 'alt');
+  hlWV = addHLRect(views.WV.rel, h, h, 'alt');
+
+  hlQ = addHLRect(views.Q.rel, h, h, 'green');
+  hlK = addHLRect(views.K.rel, h, h, 'green');
+  hlV = addHLRect(views.V.rel, h, h, 'alt');
+
+  hlS = addHLRect(views.S.rel, w, h, '');      /* 가로 넓음 */
+  hlA = addHLRect(views.A.rel, w, h, 'alt');   /* 가로 넓음 */
+  hlO = addHLRect(views.O.rel, w, h, 'green'); /* 가로 넓음 */
+
+  shapeX.textContent = `${N}×${D}`;
+  shapeQ.textContent = `${N}×${dK}`;
+  shapeK.textContent = `${N}×${dK}`;
+  shapeV.textContent = `${N}×${dV}`;
+  shapeWQ.textContent= `${D}×${dK}`;
+  shapeWK.textContent = `${D}×${dK}`;
+  shapeWV.textContent = `${D}×${dV}`;
+  shapeS.textContent  = `${N}×${N}`;
+  shapeA.textContent  = `${N}×${N}`;
+  shapeO.textContent  = `${N}×${dV}`;
+}
+
+function resetData(){
+  Q=zeros(N,dK); K=zeros(N,dK); V=zeros(N,dV);
+  S=zeros(N,N);  A=zeros(N,N);  O=zeros(N,dV);
+}
+
+/* ===== Math Helpers ===== */
+function rowSoftmax(arr){
+  const m = Math.max(...arr);
+  const ex = arr.map(v=>Math.exp(v-m));
+  const den = ex.reduce((a,b)=>a+b,0);
+  return ex.map(v=>v/den);
+}
+
+/* ===== Undo helpers ===== */
+function deepCopy(M){ return M.map(r=> r.slice()); }
+function takeSnapshot(){
+  undoStack.push({
+    cur,
+    Q: deepCopy(Q), K: deepCopy(K), V: deepCopy(V),
+    S: deepCopy(S), A: deepCopy(A), O: deepCopy(O)
+  });
+}
+function restoreSnapshot(snap){
+  cur = snap.cur;
+  Q = deepCopy(snap.Q); K = deepCopy(snap.K); V = deepCopy(snap.V);
+  S = deepCopy(snap.S); A = deepCopy(snap.A); O = deepCopy(snap.O);
+
+  // 값 반영(리렌더)
+  views.Q = renderMatrix(QArea, Q, {idPrefix:'Q'});
+  views.K = renderMatrix(KArea, K, {idPrefix:'K'});
+  views.V = renderMatrix(VArea, V, {idPrefix:'V'});
+  views.S = renderMatrix(SArea, S, {idPrefix:'S', wide:true});
+  views.A = renderMatrix(AArea, A, {idPrefix:'A', wide:true});
+  views.O = renderMatrix(OArea, O, {idPrefix:'O', wide:true});
+
+  // HL 재설치 (크기 맞춤)
+  const h = CELL(), w = WIDEW();
+  hlQ = addHLRect(views.Q.rel, h, h, 'green');
+  hlK = addHLRect(views.K.rel, h, h, 'green');
+  hlV = addHLRect(views.V.rel, h, h, 'alt');
+  hlS = addHLRect(views.S.rel, w, h, '');
+  hlA = addHLRect(views.A.rel, w, h, 'alt');
+  hlO = addHLRect(views.O.rel, w, h, 'green');
+}
+
+/* ===== One Step Executor ===== */
+function logLine(html){ log.innerHTML = `<div>${html}</div>`; }
+
+function stepOnce(){
+  if(cur>=steps.length){ logLine('완료되었습니다.'); return; }
+  takeSnapshot();
+
+  const s = steps[cur];
+
+  if(s.phase==='Q'){
+    let acc=0; for(let t2=0;t2<=s.t;t2++) acc += X[s.i][t2]*WQ[t2][s.k];
+    Q[s.i][s.k] = acc; updateCell(`Q_${s.i}_${s.k}`, acc);
+    moveHLToCell(hlX,  byId(`X_${s.i}_${s.t}`),  views.X.rel);
+    moveHLToCell(hlWQ, byId(`WQ_${s.t}_${s.k}`), views.WQ.rel);      /* ✅ WQ 강조 */
+    moveHLToCell(hlQ,  byId(`Q_${s.i}_${s.k}`),  views.Q.rel);
+    logLine(`Q[i=${s.i}, k=${s.k}] += X[i, t=${s.t}]*WQ[t, k]`);
+
+  }else if(s.phase==='K'){
+    let acc=0; for(let t2=0;t2<=s.t;t2++) acc += X[s.i][t2]*WK[t2][s.k];
+    K[s.i][s.k] = acc; updateCell(`K_${s.i}_${s.k}`, acc);
+    moveHLToCell(hlX,  byId(`X_${s.i}_${s.t}`),  views.X.rel);
+    moveHLToCell(hlWK, byId(`WK_${s.t}_${s.k}`), views.WK.rel);      /* ✅ WK 강조 */
+    moveHLToCell(hlK,  byId(`K_${s.i}_${s.k}`),  views.K.rel);
+    logLine(`K[i=${s.i}, k=${s.k}] += X[i, t=${s.t}]*WK[t, k]`);
+
+  }else if(s.phase==='V'){
+    let acc=0; for(let t2=0;t2<=s.t;t2++) acc += X[s.i][t2]*WV[t2][s.v];
+    V[s.i][s.v] = acc; updateCell(`V_${s.i}_${s.v}`, acc);
+    moveHLToCell(hlX,  byId(`X_${s.i}_${s.t}`),  views.X.rel);
+    moveHLToCell(hlWV, byId(`WV_${s.t}_${s.v}`), views.WV.rel);      /* ✅ WV 강조 */
+    moveHLToCell(hlV,  byId(`V_${s.i}_${s.v}`),  views.V.rel);
+    logLine(`V[i=${s.i}, v=${s.v}] += X[i, t=${s.t}]*WV[t, v]`);
+
+  }else if(s.phase==='S'){
+    let acc=0; for(let kk2=0; kk2<=s.kk; kk2++) acc += Q[s.i][kk2]*K[s.j][kk2];
+    const scaled = acc / Math.sqrt(dK);
+    S[s.i][s.j] = scaled; updateCell(`S_${s.i}_${s.j}`, scaled);
+    moveHLToCell(hlQ, byId(`Q_${s.i}_${s.kk}`), views.Q.rel);
+    moveHLToCell(hlK, byId(`K_${s.j}_${s.kk}`), views.K.rel);
+    moveHLToCell(hlS, byId(`S_${s.i}_${s.j}`), views.S.rel);         /* ✅ 와이드 셀 크기 반영 */
+    logLine(`S[i=${s.i}, j=${s.j}] 누적 — /√d_k 적용`);
+
+  }else if(s.phase==='SOFTMAX_ROW'){
+    const row = S[s.i].slice(); const soft = rowSoftmax(row);
+    for(let j=0;j<N;j++){ A[s.i][j]=soft[j]; updateCell(`A_${s.i}_${j}`, soft[j]); }
+    moveHLToCell(hlA, byId(`A_${s.i}_0`), views.A.rel);              /* ✅ 와이드 */
+    logLine(`softmax(row i=${s.i})`);
+
+  }else if(s.phase==='O'){
+    let acc=0; for(let j2=0;j2<=s.j;j2++) acc += A[s.i][j2]*V[j2][s.c];
+    O[s.i][s.c]=acc; updateCell(`O_${s.i}_${s.c}`, acc);
+    moveHLToCell(hlA, byId(`A_${s.i}_${s.j}`), views.A.rel);         /* ✅ 와이드 */
+    moveHLToCell(hlV, byId(`V_${s.j}_${s.c}`), views.V.rel);
+    moveHLToCell(hlO, byId(`O_${s.i}_${s.c}`), views.O.rel);         /* ✅ 와이드 */
+    logLine(`O[i=${s.i}, c=${s.c}] 누적`);
+  }
+
+  cur++;
+}
+
+/* ===== Undo ===== */
+function undoOnce(){
+  if(!undoStack.length){ logLine('되돌릴 단계가 없습니다.'); return; }
+  const snap = undoStack.pop(); restoreSnapshot(snap);
+  // 이전 단계 하이라이트 대략 복구
+  if(cur>0){
+    const p = steps[cur-1];
+    try{
+      if(p.phase==='Q'){ moveHLToCell(hlQ, byId(`Q_${p.i}_${p.k}`), views.Q.rel); }
+      else if(p.phase==='K'){ moveHLToCell(hlK, byId(`K_${p.i}_${p.k}`), views.K.rel); }
+      else if(p.phase==='V'){ moveHLToCell(hlV, byId(`V_${p.i}_${p.v}`), views.V.rel); }
+      else if(p.phase==='S'){ moveHLToCell(hlS, byId(`S_${p.i}_${p.j}`), views.S.rel); }
+      else if(p.phase==='SOFTMAX_ROW'){ moveHLToCell(hlA, byId(`A_${p.i}_0`), views.A.rel); }
+      else if(p.phase==='O'){ moveHLToCell(hlO, byId(`O_${p.i}_${p.c}`), views.O.rel); }
+    }catch(e){}
+  }
+  logLine('한 단계 되돌렸습니다.');
+}
+
+/* ===== Build & Controls ===== */
+function build(){
+  N = Math.max(2, Math.min(10, +nTok.value||4));
+  D = Math.max(2, Math.min(10, +dModel.value||4));
+  dK= Math.max(2, Math.min(10, +dKIn.value||3));
+  dV= Math.max(2, Math.min(10, +dVIn.value||3));
+
+  if(!X.length || X.length!==N || X[0].length!==D) genX();
+  if(!WQ.length|| WQ.length!==D|| WQ[0].length!==dK) genW();
+
+  resetData(); renderAll(); buildSteps();
+  undoStack=[];
+  logLine(`빈 출력/하이라이트 준비 완료. ▶/⏭ 로 진행하세요. (N=${N}, D=${D}, dK=${dK}, dV=${dV})`);
+}
+
+function play(){ clearInterval(timer); timer=setInterval(()=>{ stepOnce(); if(cur>=steps.length){ pause(); } }, 420/spd); playing=true; }
+function pause(){ playing=false; clearInterval(timer); }
+function reset(){ pause(); steps=[]; cur=0; undoStack=[]; logLine('Reset 완료. 🧱 준비를 눌러주세요.'); }
+
+/* Buttons */
+btnRandX.onclick = ()=>{ genX(); if(views.X){ renderMatrix(XArea, X, {idPrefix:'X'}); logLine('입력 X 재생성. 🧱 준비로 초기화하세요.'); } };
+btnRandW.onclick = ()=>{
+  genW();
+  if(views.WQ){
+    renderMatrix(WQArea, WQ, {idPrefix:'WQ'});
+    renderMatrix(WKArea, WK, {idPrefix:'WK'});
+    renderMatrix(WVArea, WV, {idPrefix:'WV'});
+    logLine('WQ/WK/WV 재생성. 🧱 준비로 초기화하세요.');
+  }
+};
+btnBuild.onclick = build;
+btnStep.onclick  = ()=> stepOnce();
+btnUndo.onclick  = ()=> undoOnce();
+btnPlay.onclick  = ()=>{ if(!steps.length) build(); play(); };
+btnPause.onclick = pause;
+btnReset.onclick = reset;
+
+speed.oninput = ()=>{ spd=Number(speed.value); byId('speedLbl').textContent = spd.toFixed(1)+'×'; if(playing) play(); };
+
+/* Init */
+(function init(){ genX(); genW(); build(); })();
+</script>
+</body>
+</html>

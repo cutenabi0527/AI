@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>토큰화 & 임베딩 시각화 도구</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .modal-backdrop {
+            background-color: rgba(0,0,0,0.5);
+            transition: opacity 0.3s ease-in-out;
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #888; border-radius: 3px;}
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div id="app" class="w-full min-h-screen p-4 md:p-8">
+        <!-- App content will be rendered here by JavaScript -->
+    </div>
+
+    <script>
+        const appContainer = document.getElementById('app');
+
+        const originalWordPieceVocab = {
+            '[PAD]': 0, '[UNK]': 1, '[CLS]': 2, '[SEP]': 3, '[MASK]': 4,
+            '!': 5, "'": 11, ',': 16, '.': 18,
+            'a': 69, 'b': 70, 'c': 71, 'd': 72, 'e': 73, 'f': 74, 'g': 75, 'h': 76, 'i': 77, 'j': 78, 'k': 79, 'l': 80, 'm': 81, 'n': 82, 'o': 83, 'p': 84, 'q': 85, 'r': 86, 's': 87, 't': 88, 'u': 89, 'v': 90, 'w': 91, 'x': 92, 'y': 93, 'z': 94,
+            'A': 34, 'B': 35, 'C': 36, 'D': 37, 'E': 38, 'F': 39, 'G': 40, 'H': 41, 'I': 45, 'J': 46, 'K': 47, 'L': 48, 'M': 49, 'N': 50, 'O': 51, 'P': 52, 'Q': 53, 'R': 54, 'S': 55, 'T': 56, 'U': 57, 'V': 58, 'W': 59, 'X': 60, 'Y': 61, 'Z': 62,
+            'the': 100, 'of': 10280, 'and': 101, 'to': 102, 'in': 103, 'is': 104, 'it': 105, 'you': 106,
+            '##a': 200, '##e': 201, '##i': 202, '##o': 203, '##u': 204, '##s': 205, '##t': 206, '##n': 207, '##r': 208, '##l': 209, '##d': 210, '##m': 211,
+            '##A': 3933, '##F': 4135, '##S': 3933, '##Y': 3614, 'st': 15444, '##ud': 24882, '##ent': 16071,
+            '나': 5000, '는': 5001, '학': 5002, '교': 5003, '에': 5004, '간': 5005, '다': 5006,
+            '##는': 6001, '##교': 6003, '##에': 6004, '##간': 6005, '##다': 6006,
+        };
+        const maxOriginalId = Math.max(...Object.values(originalWordPieceVocab));
+
+        let state = {
+            inputText: "I'm a student of SSAFY!",
+            embeddingDim: 8,
+            selectedToken: null,
+            tokenizeMode: 'wordpiece',
+            activeTab: 'tokenization',
+            trainingResults: null,
+            isTraining: false,
+            isTrainingResultVisible: false,
+        };
+        let uploadedTextContent = null;
+
+        const wordPieceTokenizer = {
+            vocab: { ...originalWordPieceVocab },
+            tokenize(text) {
+                const tokens = [];
+                const words = text.split(/(\s+|[^\w가-힣'])/g).filter(w => w && w.trim());
+                for (const word of words) {
+                    if (this.vocab[word] !== undefined) {
+                         tokens.push({ token: word, isSubword: false });
+                         continue;
+                    }
+                    if (/^[^\w가-힣']$/.test(word)) {
+                        tokens.push({ token: word, isSubword: false });
+                        continue;
+                    }
+                    if (/[가-힣]/.test(word)) {
+                        let isFirst = true;
+                        for (const char of word) {
+                            const key = isFirst ? char : `##${char}`;
+                             if (this.vocab[key] !== undefined) {
+                                tokens.push({ token: key, isSubword: !isFirst });
+                            } else {
+                                tokens.push({ token: char, isSubword: !isFirst });
+                            }
+                            isFirst = false;
+                        }
+                        continue;
+                    }
+                    
+                    let start = 0;
+                    while (start < word.length) {
+                        let end = word.length;
+                        let found = false;
+                        while (end > start) {
+                            const sub = word.substring(start, end);
+                            const key = start === 0 ? sub.toLowerCase() : `##${sub.toLowerCase()}`;
+                            if (this.vocab[key] !== undefined || (Object.values(this.vocab).includes(sub) && start === 0)) {
+                                const originalSub = word.substring(start, end);
+                                tokens.push({ token: start === 0 ? originalSub : `##${originalSub}`, isSubword: start !== 0 });
+                                start = end;
+                                found = true;
+                                break;
+                            }
+                            end--;
+                        }
+                         if (!found) { 
+                             tokens.push({ token: word.substring(start, start+1), isSubword: start !== 0 });
+                            start++;
+                        }
+                    }
+                }
+                return tokens;
+            },
+            convertTokensToIds(tokens) {
+                return tokens.map(t => {
+                    const token = t.token;
+                    if (this.vocab[token] !== undefined) return this.vocab[token];
+                    if (this.vocab[token.toLowerCase()] !== undefined) return this.vocab[token.toLowerCase()];
+                    return 1; // [UNK]
+                });
+            }
+        };
+
+        const tokenizeChar = (text) => text.split('').map((token, idx) => ({ id: idx, token, tokenId: (token.charCodeAt(0) % 100) + 100, isSubword: false }));
+
+        const tokenizeWordPiece = (text) => {
+            const tokens = wordPieceTokenizer.tokenize(text);
+            const ids = wordPieceTokenizer.convertTokensToIds(tokens);
+            return tokens.map((tokenObj, idx) => ({ id: idx, ...tokenObj, tokenId: ids[idx] }));
+        };
+        
+        const generateEmbedding = (tokenId, dim) => Array.from({ length: dim }, (_, i) => parseFloat((Math.sin(tokenId * 1234 + i * 0.5) * 2).toFixed(3)));
+
+        const getColor = (value) => `hsl(${(value + 2) / 4 * 240}, 70%, 60%)`;
+
+        async function trainAndExtendTokenizer(text, baseVocab, numMerges = 3000) {
+            const feedbackEl = document.getElementById('training-feedback');
+            const merges = [];
+            const wordCounts = {};
+            text.split(/\s+/).filter(w => w).forEach(word => { wordCounts[word] = (wordCounts[word] || 0) + 1; });
+            
+            let splits = Object.fromEntries(Object.keys(wordCounts).map(word => [word, word.split('')]));
+            const vocab = new Set(Object.keys(baseVocab));
+            
+            for (let i = 0; i < numMerges; i++) {
+                if (i % 10 === 0) {
+                    feedbackEl.innerHTML = `<div class="flex items-center gap-2 text-sm text-blue-600"><div class="loader"></div> <span>학습 중... (${i}/${numMerges} 병합)</span></div>`;
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
+                const pairCounts = {};
+                for (const word in wordCounts) {
+                    const currentSplit = splits[word];
+                    for (let j = 0; j < currentSplit.length - 1; j++) {
+                        const key = currentSplit[j] + currentSplit[j + 1];
+                        pairCounts[key] = (pairCounts[key] || 0) + wordCounts[word];
+                    }
+                }
+
+                if (Object.keys(pairCounts).length === 0) break;
+                const mostFrequentPairKey = Object.keys(pairCounts).reduce((a, b) => pairCounts[a] > pairCounts[b] ? a : b);
+                
+                vocab.add(mostFrequentPairKey);
+                
+                merges.push({
+                    step: i + 1,
+                    pair: `${mostFrequentPairKey[0]} + ${mostFrequentPairKey.substring(1)}`,
+                    result: mostFrequentPairKey,
+                    count: pairCounts[mostFrequentPairKey]
+                });
+
+                for (const word in wordCounts) {
+                    let currentSplit = splits[word];
+                    let newSplit = [];
+                    let j = 0;
+                    while (j < currentSplit.length) {
+                        if (j < currentSplit.length - 1 && currentSplit[j] + currentSplit[j+1] === mostFrequentPairKey) {
+                            newSplit.push(mostFrequentPairKey);
+                            j += 2;
+                        } else {
+                            newSplit.push(currentSplit[j]);
+                            j++;
+                        }
+                    }
+                    splits[word] = newSplit;
+                }
+            }
+
+            const extendedVocab = { ...baseVocab };
+            let nextId = Math.max(...Object.values(baseVocab)) + 1;
+            vocab.forEach(token => {
+                if (extendedVocab[token] === undefined) extendedVocab[token] = nextId++;
+            });
+
+            const stats = {
+                vocabSize: Object.keys(extendedVocab).length,
+                originalVocabSize: Object.keys(baseVocab).length,
+                addedTokens: Object.keys(extendedVocab).length - Object.keys(baseVocab).length,
+                longestToken: Object.keys(extendedVocab).reduce((a, b) => a.length > b.length ? a : b, ""),
+                numMerges: merges.length,
+                tokenLengthDist: Object.keys(extendedVocab).reduce((acc, token) => {
+                    acc[token.length] = (acc[token.length] || 0) + 1;
+                    return acc;
+                }, {})
+            };
+            feedbackEl.innerHTML = `✅ <span class="font-semibold">${stats.addedTokens}</span>개의 새 토큰 학습 완료! (총 어휘: <span class="font-semibold">${stats.vocabSize}</span>)`;
+            return { vocab: extendedVocab, merges, stats };
+        }
+        
+        function handleAnalyzeText() {
+            const textInput = document.getElementById('text-input');
+            if (textInput) {
+                state.inputText = textInput.value;
+            }
+            render();
+        }
+
+        function handleExampleClick(text) {
+            state.inputText = text;
+            const textInput = document.getElementById('text-input');
+            if (textInput) {
+                textInput.value = text;
+            }
+            render();
+        }
+
+        function handleModeChange(mode) { state.tokenizeMode = mode; state.selectedToken = null; render(); }
+        function handleDimChange(e) { state.embeddingDim = parseInt(e.target.value, 10); render(); }
+
+        function handleTabClick(tabName, context) {
+            if (context === 'main') {
+                state.activeTab = tabName;
+            } else if (context === 'results') {
+                document.querySelectorAll('.results-tab-trigger').forEach(btn => {
+                    const isSelected = btn.dataset.tab === tabName;
+                    btn.classList.toggle('bg-slate-800', isSelected);
+                    btn.classList.toggle('text-white', isSelected);
+                    btn.classList.toggle('text-slate-600', !isSelected);
+                    btn.classList.toggle('hover:bg-slate-300', !isSelected);
+                });
+                document.querySelectorAll('.results-tab-content').forEach(content => {
+                    content.classList.toggle('hidden', content.dataset.tab !== tabName);
+                });
+                return;
+            }
+             render();
+        }
+        
+        function handleTokenClick(tokenId) {
+            const tokens = state.tokenizeMode === 'char' ? tokenizeChar(state.inputText) : tokenizeWordPiece(state.inputText);
+            state.selectedToken = tokens.find(t => t.id === tokenId) || null;
+            render();
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            const feedbackEl = document.getElementById('training-feedback');
+            if (file && file.type === 'text/plain') {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    uploadedTextContent = e.target.result;
+                    feedbackEl.innerText = `📄 ${file.name} 로드 완료.`;
+                };
+                reader.readAsText(file);
+            } else {
+                uploadedTextContent = null;
+                feedbackEl.innerText = '❗️ .txt 파일을 선택해주세요.';
+            }
+        }
+
+        async function handleTrainTokenizer() {
+            if (!uploadedTextContent) {
+                document.getElementById('training-feedback').innerText = '❗️ 먼저 .txt 파일을 업로드해주세요.';
+                return;
+            }
+            state.isTraining = true;
+            render(); 
+            
+            const results = await trainAndExtendTokenizer(uploadedTextContent, wordPieceTokenizer.vocab);
+            wordPieceTokenizer.vocab = results.vocab;
+            state.trainingResults = results;
+            state.isTraining = false;
+            render();
+        }
+
+        function handleResetVocab() {
+            wordPieceTokenizer.vocab = { ...originalWordPieceVocab };
+            state.trainingResults = null;
+            document.getElementById('training-feedback').innerText = '어휘가 초기 상태로 복원되었습니다.';
+            render();
+        }
+
+        function toggleTrainingResults(show) { state.isTrainingResultVisible = show; render(); }
+        
+        function render() {
+            const tokens = state.tokenizeMode === 'char' ? tokenizeChar(state.inputText) : tokenizeWordPiece(state.inputText);
+            const tokensWithEmbeddings = tokens.map(token => ({ ...token, embedding: generateEmbedding(token.tokenId, state.embeddingDim) }));
+            const examples = ["I'm a student of SSAFY!", "나는 학교에 간다.", "Hello World!", "Natural Language Processing"];
+
+            appContainer.innerHTML = `
+                ${renderTrainingResultsModal()}
+                <div class="max-w-7xl mx-auto space-y-6">
+                    <header class="text-center py-4">
+                        <h1 class="text-3xl md:text-4xl font-bold text-slate-900">🔤 토큰화 & 임베딩 시각화 도구</h1>
+                        <p class="text-slate-500 mt-2">BERT(WordPiece) 토크나이저의 작동 방식을 시각적으로 탐색하고 확장해보세요.</p>
+                    </header>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                        <div class="lg:col-span-2 space-y-6">
+                            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                                <h2 class="text-lg font-semibold text-slate-800 mb-4">📝 텍스트 입력</h2>
+                                <div class="flex items-start gap-2">
+                                    <textarea id="text-input" class="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition flex-grow" rows="4">${state.inputText}</textarea>
+                                    <button id="analyze-btn" class="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition h-full">분석</button>
+                                </div>
+                                <div class="flex flex-wrap gap-2 mt-3">
+                                    ${examples.map(ex => `<button class="example-btn px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full" data-text="${ex}">${ex}</button>`).join('')}
+                                </div>
+                            </div>
+                            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200 space-y-4">
+                                <div class="flex-1">
+                                    <label class="font-semibold text-slate-800 block mb-2 text-lg">⚙️ 설정</label>
+                                    <div class="space-y-4">
+                                        <div>
+                                            <p class="text-sm font-medium text-slate-600 mb-2">토큰화 방식</p>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <button data-mode="char" class="mode-btn text-sm py-2 rounded-lg font-semibold transition ${state.tokenizeMode === 'char' ? 'bg-slate-800 text-white' : 'bg-slate-100 hover:bg-slate-200'}">문자</button>
+                                                <button data-mode="wordpiece" class="mode-btn text-sm py-2 rounded-lg font-semibold transition ${state.tokenizeMode === 'wordpiece' ? 'bg-slate-800 text-white' : 'bg-slate-100 hover:bg-slate-200'}">WordPiece</button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm font-medium text-slate-600 mb-2">임베딩 차원: <span class="font-bold text-blue-600">${state.embeddingDim}D</span></p>
+                                            <input id="dim-slider" type="range" min="4" max="64" value="${state.embeddingDim}" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="border-t border-slate-200 pt-4">
+                                     <h3 class="text-md font-semibold text-slate-800 mb-2">🧑‍🏫 토크나이저 확장</h3>
+                                     <div class="flex gap-2 items-center">
+                                        <input type="file" id="file-upload" accept=".txt" class="block w-full text-sm text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                                        <button id="train-btn" class="p-2 bg-green-500 text-white rounded-full hover:bg-green-600 disabled:bg-slate-400 flex-shrink-0" ${state.isTraining ? 'disabled' : ''}>
+                                            ${state.isTraining ? '<div class="loader"></div>' : '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.428A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>'}
+                                        </button>
+                                         <button id="reset-vocab-btn" class="p-2 bg-red-500 text-white rounded-full hover:bg-red-600 disabled:bg-slate-400 flex-shrink-0" ${!state.trainingResults ? 'disabled' : ''}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg>
+                                        </button>
+                                     </div>
+                                     <div id="training-feedback" class="text-sm mt-2 text-slate-600 h-5"></div>
+                                     <button id="view-results-btn" class="w-full mt-2 py-2 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 disabled:bg-slate-400 text-sm" ${!state.trainingResults ? 'disabled' : ''}>📊 학습 결과 보기</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="lg:col-span-3">
+                             <div class="bg-white p-2 rounded-xl shadow-md border border-slate-200">
+                                <div class="flex gap-1 bg-slate-100 rounded-lg p-1 mb-2">
+                                    <button data-tab="tokenization" class="tab-trigger flex-1 py-1.5 text-sm rounded-md font-semibold ${state.activeTab === 'tokenization' ? 'bg-slate-800 text-white' : 'hover:bg-slate-200'}">1. 토큰화</button>
+                                    <button data-tab="encoding" class="tab-trigger flex-1 py-1.5 text-sm rounded-md font-semibold ${state.activeTab === 'encoding' ? 'bg-slate-800 text-white' : 'hover:bg-slate-200'}">2. ID 변환</button>
+                                    <button data-tab="embedding" class="tab-trigger flex-1 py-1.5 text-sm rounded-md font-semibold ${state.activeTab === 'embedding' ? 'bg-slate-800 text-white' : 'hover:bg-slate-200'}">3. 임베딩</button>
+                                </div>
+                                <div class="p-4">
+                                    <div id="tokenization-content" class="tab-content ${state.activeTab === 'tokenization' ? 'active' : ''}">
+                                        <div class="space-y-4">
+                                            <p class="text-sm text-slate-600">${ state.tokenizeMode === 'char' ? '텍스트를 문자 단위로 분리합니다.' : `WordPiece 방식 (어휘 크기: ${Object.keys(wordPieceTokenizer.vocab).length})`}</p>
+                                            <div>
+                                                <h4 class="font-semibold text-slate-800 mb-2 text-sm">미니멀 뷰</h4>
+                                                <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 text-md flex flex-wrap items-center gap-x-1">
+                                                    ${tokens.map((t, i) => `<span class="${t.isSubword ? 'text-purple-600' : 'text-blue-700'}">${t.token}</span>` + (i < tokens.length - 1 ? '<span class="text-slate-300">|</span>' : '')).join('')}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <h4 class="font-semibold text-slate-800 mb-2 text-sm">블록 뷰 (총 ${tokens.length}개)</h4>
+                                                <div class="flex flex-wrap gap-2">
+                                                    ${tokens.map(token => `
+                                                        <div class="token-viz px-2.5 py-1 rounded-md shadow-sm cursor-pointer ${token.isSubword ? 'bg-purple-500' : 'bg-blue-500'} text-white" data-id="${token.id}">
+                                                            <span class="text-sm font-semibold">${token.token}</span>
+                                                        </div>
+                                                    `).join('')}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="encoding-content" class="tab-content ${state.activeTab === 'encoding' ? 'active' : ''}">
+                                       <div class="space-y-2">
+                                            ${tokens.map(token => `
+                                                <div class="token-viz flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200 hover:border-blue-400 cursor-pointer" data-id="${token.id}">
+                                                    <div class="flex items-center gap-2">
+                                                        <div class="w-14 h-10 text-sm font-semibold rounded-md flex items-center justify-center text-white ${token.isSubword ? 'bg-purple-500' : 'bg-blue-500'}">${token.token}</div>
+                                                        <svg class="w-5 h-5 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+                                                        <div class="w-16 h-10 text-lg font-bold rounded-md flex items-center justify-center text-white bg-green-500">${token.tokenId}</div>
+                                                    </div>
+                                                    <div class="text-xs text-slate-400">#${token.id}</div>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                    <div id="embedding-content" class="tab-content ${state.activeTab === 'embedding' ? 'active' : ''}">
+                                        <div class="space-y-4">
+                                            ${tokensWithEmbeddings.map(token => `
+                                                <div class="p-3 bg-white rounded-lg border border-slate-200">
+                                                    <div class="flex items-center gap-3 mb-2">
+                                                        <div class="w-10 h-10 text-sm font-semibold rounded-md flex items-center justify-center text-white flex-shrink-0 ${token.isSubword ? 'bg-purple-500' : 'bg-blue-500'}">${token.token}</div>
+                                                        <div class="text-sm font-medium text-slate-700">Token ID: <span class="font-bold text-green-600">${token.tokenId}</span></div>
+                                                    </div>
+                                                    <div class="flex gap-1 mb-1.5">
+                                                        ${token.embedding.map((val, i) => `<div class="flex-1 h-8 rounded" style="background-color: ${getColor(val)};" title="Dim ${i}: ${val}"></div>`).join('')}
+                                                    </div>
+                                                    <div class="text-xs text-slate-500 font-mono bg-slate-50 p-1.5 rounded">
+                                                        [${token.embedding.join(', ')}]
+                                                    </div>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                </div>
+                             </div>
+                        </div>
+                    </div>
+                     ${state.selectedToken ? `
+                    <div class="bg-white shadow-lg border-2 border-yellow-400 rounded-xl p-4 mt-6">
+                        <h3 class="text-md font-semibold text-slate-800 flex items-center gap-2 mb-3"><span>🔍</span> 선택된 토큰 상세 정보</h3>
+                        <div class="grid md:grid-cols-3 gap-3">
+                            <div class="text-center p-3 bg-blue-50 rounded-lg"><div class="text-2xl font-bold break-all">${state.selectedToken.token}</div><div class="text-xs text-slate-500 mt-1">${state.selectedToken.isSubword ? 'Subword' : 'Token'}</div></div>
+                            <div class="text-center p-3 bg-green-50 rounded-lg"><div class="text-2xl font-bold text-green-600">${state.selectedToken.tokenId}</div><div class="text-xs text-slate-500 mt-1">Vocab ID</div></div>
+                            <div class="text-center p-3 bg-purple-50 rounded-lg"><div class="text-2xl font-bold text-purple-600">${state.embeddingDim}D</div><div class="text-xs text-slate-500 mt-1">임베딩 차원</div></div>
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            
+            document.getElementById('analyze-btn')?.addEventListener('click', handleAnalyzeText);
+            document.querySelectorAll('.example-btn').forEach(btn => btn.addEventListener('click', () => handleExampleClick(btn.dataset.text)));
+            document.querySelectorAll('.mode-btn').forEach(btn => btn.addEventListener('click', () => handleModeChange(btn.dataset.mode)));
+            document.getElementById('dim-slider')?.addEventListener('input', handleDimChange);
+            document.querySelectorAll('.tab-trigger').forEach(btn => btn.addEventListener('click', () => handleTabClick(btn.dataset.tab, 'main')));
+            document.querySelectorAll('.token-viz').forEach(el => el.addEventListener('click', () => handleTokenClick(parseInt(el.dataset.id, 10))));
+            document.getElementById('file-upload')?.addEventListener('change', handleFileSelect);
+            document.getElementById('train-btn')?.addEventListener('click', handleTrainTokenizer);
+            document.getElementById('reset-vocab-btn')?.addEventListener('click', handleResetVocab);
+            document.getElementById('view-results-btn')?.addEventListener('click', () => toggleTrainingResults(true));
+            document.getElementById('modal-close-btn')?.addEventListener('click', () => toggleTrainingResults(false));
+            document.querySelectorAll('.results-tab-trigger').forEach(btn => btn.addEventListener('click', () => handleTabClick(btn.dataset.tab, 'results')));
+        }
+        
+        function renderTrainingResultsModal() {
+            if (!state.isTrainingResultVisible || !state.trainingResults) return '';
+            const { stats, merges, vocab } = state.trainingResults;
+            const sortedVocab = Object.entries(vocab).sort((a, b) => a[1] - b[1]);
+            const maxCount = Math.max(1, ...Object.values(stats.tokenLengthDist));
+            const sortedDist = Object.entries(stats.tokenLengthDist).sort((a,b) => parseInt(a[0]) - parseInt(b[0]));
+
+            return `
+                <div id="results-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div id="modal-backdrop" class="modal-backdrop fixed inset-0" onclick="document.getElementById('modal-close-btn').click()"></div>
+                    <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col relative">
+                        <header class="flex items-center justify-between p-4 border-b">
+                            <h2 class="text-xl font-bold text-slate-800">📊 토크나이저 학습 결과</h2>
+                            <button id="modal-close-btn" class="p-2 rounded-full hover:bg-slate-200"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                        </header>
+                        <nav class="p-2 bg-slate-50 border-b">
+                            <div class="flex gap-1 bg-slate-200 rounded-lg p-1">
+                                <button data-tab="summary" class="results-tab-trigger flex-1 py-1.5 text-sm font-semibold rounded-md bg-slate-800 text-white">요약</button>
+                                <button data-tab="vocab" class="results-tab-trigger flex-1 py-1.5 text-sm font-semibold rounded-md text-slate-600 hover:bg-slate-300">어휘 목록</button>
+                                <button data-tab="merges" class="results-tab-trigger flex-1 py-1.5 text-sm font-semibold rounded-md text-slate-600 hover:bg-slate-300">병합 과정</button>
+                            </div>
+                        </nav>
+                        <main class="p-6 overflow-y-auto flex-grow">
+                            <div data-tab="summary" class="results-tab-content space-y-6">
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                                    <div class="p-4 bg-blue-50 rounded-lg"><div class="text-3xl font-bold text-blue-600">${stats.vocabSize}</div><div class="text-sm text-slate-600 mt-1">총 어휘 크기 <span class="text-xs">(${stats.originalVocabSize}+${stats.addedTokens})</span></div></div>
+                                    <div class="p-4 bg-green-50 rounded-lg"><div class="text-3xl font-bold text-green-600">${stats.numMerges}</div><div class="text-sm text-slate-600 mt-1">병합 횟수</div></div>
+                                    <div class="p-4 bg-purple-50 rounded-lg"><div class="text-3xl font-bold text-purple-600 break-all">"${stats.longestToken}"</div><div class="text-sm text-slate-600 mt-1">가장 긴 토큰</div></div>
+                                </div>
+                                <div>
+                                    <h4 class="font-semibold text-slate-700 mb-2">토큰 길이별 분포</h4>
+                                    <div class="p-4 bg-slate-50 rounded-lg border space-y-2">
+                                        ${sortedDist.map(([len, count]) => `
+                                            <div class="flex items-center gap-2 text-sm">
+                                                <div class="w-8 text-right font-mono text-slate-600">${len}</div>
+                                                <div class="flex-grow bg-slate-200 rounded-full h-5"><div class="bg-blue-500 h-5 rounded-full text-white text-xs flex items-center justify-end px-2" style="width: ${ (count / maxCount) * 100 }%;">${count}</div></div>
+                                            </div>`).join('')}
+                                    </div>
+                                </div>
+                            </div>
+                            <div data-tab="vocab" class="results-tab-content hidden">
+                                <div class="flex flex-wrap gap-2">
+                                ${sortedVocab.map(([token, id]) => {
+                                    const isNew = id > maxOriginalId;
+                                    return `<div class="flex items-center gap-2 p-1.5 rounded-md ${isNew ? 'bg-green-50 text-green-800' : 'bg-blue-50 text-blue-800'} border ${isNew ? 'border-green-200' : 'border-blue-200'}">
+                                        <span class="font-mono text-xs font-semibold">${id}</span>
+                                        <span class="font-semibold text-sm">${token}</span>
+                                    </div>`
+                                }).join('')}
+                                </div>
+                            </div>
+                            <div data-tab="merges" class="results-tab-content hidden">
+                                <div class="relative pl-4 space-y-4">
+                                <div class="absolute left-0 top-0 h-full w-0.5 bg-slate-200 -z-10"></div>
+                                ${merges.map(m => {
+                                    const [part1, part2] = m.pair.split(' + ');
+                                    return `<div class="relative">
+                                        <div class="absolute -left-[22px] top-1/2 -translate-y-1/2 w-4 h-4 bg-blue-500 rounded-full border-2 border-white"></div>
+                                        <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                                            <div class="text-xs font-semibold text-slate-500 w-8 text-center">${m.step}차</div>
+                                            <div class="flex items-center gap-1.5 font-mono text-sm flex-wrap">
+                                                <span class="px-2 py-0.5 bg-red-100 text-red-700 rounded-md">${part1}</span>
+                                                <span class="text-slate-500">+</span>
+                                                <span class="px-2 py-0.5 bg-red-100 text-red-700 rounded-md">${part2}</span>
+                                                <span class="text-slate-500">→</span>
+                                                <span class="px-2 py-0.5 bg-green-100 text-green-700 font-bold rounded-md">${m.result}</span>
+                                            </div>
+                                            <div class="ml-auto text-xs text-slate-500 whitespace-nowrap">(빈도: ${m.count})</div>
+                                        </div>
+                                    </div>`
+                                    }).join('')}
+                                </div>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            `;
+        }
+        document.addEventListener('DOMContentLoaded', render);
+    </script>
+</body>
+</html>
+
