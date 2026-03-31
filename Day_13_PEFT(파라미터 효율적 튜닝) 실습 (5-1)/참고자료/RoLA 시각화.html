@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LoRA 어댑터: 두 벡터 외적 → 가중치 행렬 (r, α, dropout, bias) — Stable</title>
+  <style>
+    :root{ --cell: 34px; --gap: 6px; --hl: #2563eb; --gray:#e2e8f0; }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#f8fafc;color:#0f172a;margin:18px}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .card{background:#fff;border:1px solid var(--gray);border-radius:12px;padding:12px}
+    .title{font-weight:700;font-size:18px;margin:0 0 8px}
+    .mono{font-family:ui-monospace,Menlo,Consolas,"Courier New",monospace}
+    .btn{border:1px solid var(--gray);background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--gray);background:#f8fafc;font-size:11px}
+    input[type=number],input[type=range],select,textarea{border:1px solid var(--gray);border-radius:10px;padding:6px 10px;background:#fff}
+    textarea{width:100%;height:78px;font-size:12px}
+    .op-wrap{display:grid;gap:var(--gap);align-items:start}
+    .cell{width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center;border:1px solid var(--gray);border-radius:8px;background:#fff;font-size:12px;font-variant-numeric:tabular-nums}
+    .hdr{background:#f1f5f9;font-weight:600}
+    .focus{outline:2px solid var(--hl);box-shadow:0 0 0 4px rgba(37,99,235,.15)}
+    .muted{color:#64748b}
+  </style>
+</head>
+<body>
+  <h1 class="title">벡터 2개(가로/세로) → 외적으로 행렬 만들기 & LoRA(ΔW)로 확장</h1>
+  <p class="muted">핵심: 열벡터 <span class="mono">u∈ℝ<sup>d_out</sup></span>과 행벡터 <span class="mono">v<sup>T</sup>∈ℝ<sup>d_in</sup></span>를 배치해 <span class="mono">W = u·v<sup>T</sup></span>를 만듭니다. LoRA는 이런 랭크‑1 외적을 <span class="mono">r</span>개 더해 <span class="mono">ΔW = Σ<sub>k=1..r</sub> u<sub>k</sub> v<sub>k</sub><sup>T</sup> · (α/r)</span>로 구성합니다.</p>
+
+  <!-- <div class="card">
+    <div class="title">0) 입력 파서 셀프 테스트</div>
+    <div id="tlog" class="mono" style="white-space:pre-wrap;font-size:12px"></div>
+  </div> -->
+
+  <div class="card" style="margin-top:12px">
+    <div class="title">1) 외적 시각화 — 세로의 <span class="mono">u</span>, 가로의 <span class="mono">v</span> → <span class="mono">W = u·v<sup>T</sup></span></div>
+    <div class="row">
+      <div class="card" style="flex:1 1 280px;min-width:260px">
+        <div>출력 차원 <b>d_out</b>(행): <input id="dOut" type="range" min="2" max="12" value="5"> <span id="dOutVal" class="mono">5</span></div>
+        <div style="margin-top:8px">입력 차원 <b>d_in</b>(열): <input id="dIn" type="range" min="2" max="12" value="6"> <span id="dInVal" class="mono">6</span></div>
+        <div style="margin-top:8px">벡터 값 편집</div>
+        <div class="mono muted" style="font-size:12px">쉼표/공백/탭/개행 모두 구분자로 처리</div>
+        <div style="margin-top:4px">u: <textarea id="uTxt" placeholder="예: 1, 0.5, -0.2, ..."></textarea></div>
+        <div style="margin-top:6px">v: <textarea id="vTxt" placeholder="예: -0.3 2 0.1 ..."></textarea></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="randU">🎲 u</button>
+          <button class="btn" id="randV">🎲 v</button>
+          <button class="btn" id="zeroUV">u,v = 0</button>
+          <button class="btn" id="resetUV">기본값</button>
+        </div>
+        <div class="mono" style="margin-top:8px;font-size:12px">
+          파라미터 수(랭크‑1): <b id="pLow">—</b> · 풀랭크: <b id="pFull">—</b> · 절감율: <b id="save">—</b><br/>
+          ‖u‖₂=<b id="normU">—</b>, ‖v‖₂=<b id="normV">—</b> · W 크기: <b id="shape">—</b>
+        </div>
+      </div>
+
+      <div class="card" style="flex:3 1 560px;min-width:520px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="mono">W[i,j] = u[i] × v[j] = <span class="mono">u·v<sup>T</sup></span></div>
+          <div class="row">
+            <button class="btn" id="step">⏭ 다음 셀</button>
+            <button class="btn" id="play">▶</button>
+            <button class="btn" id="pause">⏸</button>
+            <button class="btn" id="clear">↺ 전체 초기화</button>
+          </div>
+        </div>
+        <div id="opWrap" class="op-wrap" style="margin-top:10px"></div>
+        <div class="mono muted" id="status" style="margin-top:6px;font-size:12px">준비됨</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="title">2) LoRA 어댑터(ΔW) = r개의 외적 합</div>
+    <div class="row">
+      <div class="card" style="flex:1 1 260px;min-width:240px">
+        <div>추천 기본 파라미터</div>
+        <div class="mono" style="font-size:13px">r=<b id="def_r">8</b>, α=<b id="def_a">16</b>, dropout=<b>0.0</b>, bias=<b>none</b></div>
+        <div style="margin-top:8px">r: <input id="l_r" type="number" value="8" min="1" step="1" class="mono" style="width:90px"></div>
+        <div style="margin-top:8px">α: <input id="l_alpha" type="number" value="16" step="1" class="mono" style="width:90px"> <span id="alphaHint" class="mono" style="font-size:12px"></span></div>
+        <div style="margin-top:8px">dropout: <input id="l_drop" type="number" value="0.0" min="0" max="1" step="0.01" class="mono" style="width:90px"></div>
+        <div style="margin-top:8px">bias: <select id="l_bias" class="mono"><option value="none" selected>none</option><option value="all">all (참고)</option></select></div>
+        <div style="margin-top:8px">미리보기 크기</div>
+        <div> d_out: <input id="pv_out" type="number" value="6" step="1" class="mono" style="width:70px"> 
+             d_in:  <input id="pv_in"  type="number" value="8" step="1" class="mono" style="width:70px"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="initLoRA">🧱 ΔW 초기화(r쌍 생성)</button>
+          <button class="btn" id="stepLoRA">⏭ 다음 k</button>
+          <button class="btn" id="playLoRA">▶</button>
+          <button class="btn" id="pauseLoRA">⏸</button>
+          <button class="btn" id="resetLoRA">↺</button>
+        </div>
+      </div>
+      <div class="card" style="flex:3 1 520px;min-width:360px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="mono">ΔW = Σ u<sub>k</sub> v<sub>k</sub><sup>T</sup> · (α/r)</div>
+          <div class="mono">진행: <span id="lora_prog" class="pill">0 / 0</span></div>
+        </div>
+        <div id="loraWrap" class="op-wrap" style="margin-top:10px"></div>
+        <div class="row" style="margin-top:8px">
+          <div class="mono" style="font-size:12px">‖ΔW‖<sub>F</sub> = <b id="dw_norm">—</b></div>
+          <div class="mono" style="font-size:12px">최대 |ΔW[i,j]| = <b id="dw_arg">—</b></div>
+          <div class="mono" style="font-size:12px">파라미터 수(LoRA, 1모듈) = r·(d_out+d_in) <span class="muted">(+ bias가 all이면 d_out 추가)</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ===== Utilities & Parsing (FIX: sanitize escaped sequences; avoid stray newlines) =====
+function isDelim(ch){
+  // 실제 구분자 문자: space, comma, TAB, LF, CR
+  return ch === ' ' || ch === ',' || ch === '\t' || ch === '\n' || ch === '\r';
+}
+function parseCSV(s){
+  // "\\t", "\\n", "\\r", "\\r\\n" 같은 이스케이프를 실제 제어문자로 정규화
+  s = String(s)
+        .replace(/\\r\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r');
+  var out = [], buf = '';
+  for (var i=0; i<s.length; i++){
+    var ch = s[i];
+    if (isDelim(ch)) {
+      if (buf.length){ out.push(parseFloat(buf)); buf=''; }
+    } else {
+      buf += ch;
+    }
+  }
+  if (buf.length) out.push(parseFloat(buf));
+  return out;
+}
+function zeros(n){ var a=[]; for(var i=0;i<n;i++) a.push(0); return a; }
+function randn(){ var u=1-Math.random(), v=1-Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function randVec(n,scale){ if(!scale) scale=0.6; var a=[]; for(var i=0;i<n;i++) a.push(Math.round(randn()*scale*100)/100); return a; }
+function norm2(a){ var s=0; for(var i=0;i<a.length;i++) s+=a[i]*a[i]; return Math.sqrt(s); }
+function outer(u,v){ var R=u.length, C=v.length, W=[]; for(var i=0;i<R;i++){ var row=[]; for(var j=0;j<C;j++){ row.push(u[i]*v[j]); } W.push(row); } return W; }
+function addMat(A,B){ var R=A.length,C=A[0].length, M=[]; for(var i=0;i<R;i++){ var r=[]; for(var j=0;j<C;j++){ r.push(A[i][j]+B[i][j]); } M.push(r); } return M; }
+function scaleMat(A,s){ var R=A.length,C=A[0].length, M=[]; for(var i=0;i<R;i++){ var r=[]; for(var j=0;j<C;j++){ r.push(A[i][j]*s); } M.push(r); } return M; }
+function frob(A){ var s=0; for(var i=0;i<A.length;i++) for(var j=0;j<A[0].length;j++) s+=A[i][j]*A[i][j]; return Math.sqrt(s); }
+function argmaxAbs(A){ var bi=0,bj=0,bv=-1; for(var i=0;i<A.length;i++) for(var j=0;j<A[0].length;j++){ var a=Math.abs(A[i][j]); if(a>bv){ bv=a; bi=i; bj=j; } } return [bi,bj,bv]; }
+
+// ===== 0) Parser self-tests =====
+function runParserTests(){
+  var tests=[
+    {name:'spaces',    input:'1 2  3  4',           expect:[1,2,3,4]},
+    {name:'commas',    input:'1,2,3,4',             expect:[1,2,3,4]},
+    {name:'tabs',      input:'1\\t2\\t\\t3\\t4',   expect:[1,2,3,4]},
+    {name:'newlines',  input:'1\\n2\\n\\n3 4',       expect:[1,2,3,4]},
+    {name:'mix',       input:' -0.5, 2.75\\t3\\n4 ', expect:[-0.5,2.75,3,4]},
+    {name:'single',    input:'7',                   expect:[7]},
+    {name:'empty',     input:'',                    expect:[]},
+    // 추가 테스트 (기존 테스트는 변경하지 않음)
+    {name:'crlf',      input:'1\\r\\n2\\r\\n3',     expect:[1,2,3]},
+    {name:'cr-only',   input:'1\\r2\\r3',           expect:[1,2,3]},
+    {name:'leading-delims', input:'\\n\\t , 1 , 2',   expect:[1,2]},
+    {name:'consecutive-delims', input:'1,,  ,2',    expect:[1,2]},
+  ];
+  var lines=[], okAll=true;
+  for (var idx=0; idx<tests.length; idx++){
+    var t=tests[idx];
+    var out=parseCSV(t.input);
+    var ok= out.length===t.expect.length && out.every(function(v,i){return (isNaN(v)&&isNaN(t.expect[i])) || Math.abs(v-t.expect[i])<1e-9});
+    lines.push((ok?'✅':'❌')+' '+t.name+': '+JSON.stringify(out));
+    if(!ok) okAll=false;
+  }
+  document.getElementById('tlog').textContent = (okAll? '모든 파서 테스트 통과\n':'문제 발견\n') + lines.join('\n');
+}
+
+// ===== 1) Rank-1 outer product board =====
+var st={ dOut:5, dIn:6, u:[], v:[], i:0, j:0, timer:null, speed:320 };
+function layoutOP(container, u, v, W){
+  container.innerHTML='';
+  var R=u.length, C=v.length;
+  var op=document.createElement('div');
+  op.style.display='grid'; op.style.gap='var(--gap)';
+  op.style.gridTemplateColumns = `auto repeat(${C}, var(--cell))`;
+  var corner=document.createElement('div'); corner.className='cell hdr'; corner.textContent=''; op.appendChild(corner);
+  for(var j=0;j<C;j++){ var c=document.createElement('div'); c.className='cell hdr'; c.id=`v_${j}`; c.textContent=Number(v[j].toFixed(2)); op.appendChild(c); }
+  for(var i=0;i<R;i++){
+    var ucell=document.createElement('div'); ucell.className='cell hdr'; ucell.id=`u_${i}`; ucell.textContent=Number(u[i].toFixed(2)); op.appendChild(ucell);
+    for(var j=0;j<C;j++){ var d=document.createElement('div'); d.className='cell'; d.id=`w_${i}_${j}`; d.textContent=(W?Number(W[i][j].toFixed(2)):''); op.appendChild(d); }
+  }
+  container.appendChild(op);
+}
+function updateStats(u,v){
+  document.getElementById('pLow').textContent = `${u.length}+${v.length} = ${u.length+v.length}`;
+  document.getElementById('pFull').textContent = `${u.length}×${v.length} = ${u.length*v.length}`;
+  var save = 1 - (u.length+v.length)/(u.length*v.length);
+  document.getElementById('save').textContent = `${(save*100).toFixed(2)}%`;
+  document.getElementById('normU').textContent = norm2(u).toFixed(3);
+  document.getElementById('normV').textContent = norm2(v).toFixed(3);
+  document.getElementById('shape').textContent = `${u.length}×${v.length}`;
+}
+function refreshUV(){
+  if(st.u.length!==st.dOut) st.u=randVec(st.dOut);
+  if(st.v.length!==st.dIn) st.v=randVec(st.dIn);
+  document.getElementById('uTxt').value=st.u.join(', ');
+  document.getElementById('vTxt').value=st.v.join(', ');
+}
+function parseUV(){
+  var ut=parseCSV(document.getElementById('uTxt').value);
+  var vt=parseCSV(document.getElementById('vTxt').value);
+  st.u = ut.length===st.dOut? ut : ut.concat(zeros(st.dOut)).slice(0,st.dOut);
+  st.v = vt.length===st.dIn? vt : vt.concat(zeros(st.dIn)).slice(0,st.dIn);
+}
+function buildBoard(){ parseUV(); layoutOP(document.getElementById('opWrap'), st.u, st.v); st.i=0; st.j=0; updateStats(st.u,st.v); setStatus('준비됨'); clearFocus(); }
+function clearFocus(){
+  for(var i=0;i<st.dOut;i++){ var el=document.getElementById(`u_${i}`); if(el) el.classList.remove('focus'); }
+  for(var j=0;j<st.dIn;j++){ var el2=document.getElementById(`v_${j}`); if(el2) el2.classList.remove('focus'); }
+  var cells=document.querySelectorAll('[id^="w_"]'); cells.forEach(function(c){ c.classList.remove('focus'); });
+}
+function setStatus(s){ document.getElementById('status').textContent = s; }
+function stepOnce(){
+  if(st.i>=st.dOut){ setStatus('완료'); return; }
+  var i=st.i, j=st.j;
+  document.getElementById(`u_${i}`).classList.add('focus');
+  document.getElementById(`v_${j}`).classList.add('focus');
+  var val = st.u[i]*st.v[j];
+  var cell = document.getElementById(`w_${i}_${j}`);
+  cell.textContent = Number(val.toFixed(2));
+  cell.classList.add('focus');
+  setStatus(`W[${i},${j}] = u[${i}]×v[${j}] = ${st.u[i].toFixed(2)}×${st.v[j].toFixed(2)} = ${val.toFixed(2)}`);
+  st.j++; if(st.j>=st.dIn){ st.j=0; st.i++; }
+}
+function play(){ if(st.timer) clearInterval(st.timer); st.timer=setInterval(function(){ stepOnce(); if(st.i>=st.dOut){ pause(); } }, st.speed); }
+function pause(){ if(st.timer){ clearInterval(st.timer); st.timer=null; setStatus('일시 정지'); } }
+function clearAll(){ pause(); layoutOP(document.getElementById('opWrap'), st.u, st.v); st.i=0; st.j=0; clearFocus(); setStatus('초기화'); }
+(function bindRank1(){
+  document.getElementById('dOut').addEventListener('input', function(){ st.dOut=+this.value; document.getElementById('dOutVal').textContent=st.dOut; refreshUV(); buildBoard(); });
+  document.getElementById('dIn').addEventListener('input', function(){ st.dIn=+this.value; document.getElementById('dInVal').textContent=st.dIn; refreshUV(); buildBoard(); });
+  document.getElementById('randU').addEventListener('click', function(){ st.u=randVec(st.dOut); document.getElementById('uTxt').value=st.u.join(', '); buildBoard(); });
+  document.getElementById('randV').addEventListener('click', function(){ st.v=randVec(st.dIn); document.getElementById('vTxt').value=st.v.join(', '); buildBoard(); });
+  document.getElementById('zeroUV').addEventListener('click', function(){ st.u=zeros(st.dOut); st.v=zeros(st.dIn); document.getElementById('uTxt').value=st.u.join(', '); document.getElementById('vTxt').value=st.v.join(', '); buildBoard(); });
+  document.getElementById('resetUV').addEventListener('click', function(){ st.dOut=5; st.dIn=6; document.getElementById('dOut').value=5; document.getElementById('dIn').value=6; document.getElementById('dOutVal').textContent=5; document.getElementById('dInVal').textContent=6; refreshUV(); buildBoard(); });
+  document.getElementById('uTxt').addEventListener('input', buildBoard);
+  document.getElementById('vTxt').addEventListener('input', buildBoard);
+  document.getElementById('step').addEventListener('click', stepOnce);
+  document.getElementById('play').addEventListener('click', play);
+  document.getElementById('pause').addEventListener('click', pause);
+  document.getElementById('clear').addEventListener('click', clearAll);
+})();
+
+// ===== 2) LoRA adapter builder (rank-r accumulation) =====
+var L={ r:8, alpha:16, drop:0.0, bias:'none', dOut:6, dIn:8, pairs:[], k:0, timer:null, speed:280, DW:[] };
+function refreshLoraUI(){ var r=+document.getElementById('l_r').value||8; var a=+document.getElementById('l_alpha').value||16; document.getElementById('alphaHint').textContent = (a===2*r? 'α가 권장값(2r)입니다.' : '권장: α≈2r → 현재 2r='+ (2*r)); }
+function layoutLoRA(container, u, v, W){ layoutOP(container, u, v, W); }
+function initLoRA(){ L.r=+document.getElementById('l_r').value||8; L.alpha=+document.getElementById('l_alpha').value||16; L.drop=+document.getElementById('l_drop').value||0; L.bias=document.getElementById('l_bias').value; L.dOut=+document.getElementById('pv_out').value||6; L.dIn=+document.getElementById('pv_in').value||8; L.k=0; L.pairs=[]; L.DW = zeros(L.dOut).map(function(){return zeros(L.dIn);}); for(var k=0;k<L.r;k++){ L.pairs.push({u:randVec(L.dOut), v:randVec(L.dIn)}); }
+  layoutLoRA(document.getElementById('loraWrap'), zeros(L.dOut), zeros(L.dIn), L.DW);
+  updateDWStats(); updateProg();
+}
+function updateProg(){ document.getElementById('lora_prog').textContent = L.k + ' / ' + L.r; }
+function updateDWStats(){ var n=frob(L.DW).toFixed(3); var am=argmaxAbs(L.DW); document.getElementById('dw_norm').textContent=n; document.getElementById('dw_arg').textContent='@(' + am[0] + ',' + am[1] + ')=' + am[2].toFixed(3); }
+function stepLoRA(){ if(L.k>=L.r){ return; } var pair=L.pairs[L.k]; var term=outer(pair.u, pair.v); var scaled=scaleMat(term, L.alpha/L.r); L.DW = addMat(L.DW, scaled); layoutLoRA(document.getElementById('loraWrap'), pair.u, pair.v, L.DW); L.k++; updateProg(); updateDWStats(); }
+function playLoRA(){ if(L.timer) clearInterval(L.timer); L.timer=setInterval(function(){ stepLoRA(); if(L.k>=L.r){ pauseLoRA(); } }, L.speed); }
+function pauseLoRA(){ if(L.timer){ clearInterval(L.timer); L.timer=null; } }
+function resetLoRA(){ pauseLoRA(); L.k=0; L.DW = zeros(L.dOut).map(function(){return zeros(L.dIn);}); layoutLoRA(document.getElementById('loraWrap'), zeros(L.dOut), zeros(L.dIn), L.DW); updateProg(); updateDWStats(); }
+(function bindLoRA(){
+  document.getElementById('l_r').addEventListener('input', refreshLoraUI);
+  document.getElementById('l_alpha').addEventListener('input', refreshLoraUI);
+  document.getElementById('initLoRA').addEventListener('click', initLoRA);
+  document.getElementById('stepLoRA').addEventListener('click', stepLoRA);
+  document.getElementById('playLoRA').addEventListener('click', playLoRA);
+  document.getElementById('pauseLoRA').addEventListener('click', pauseLoRA);
+  document.getElementById('resetLoRA').addEventListener('click', resetLoRA);
+})();
+
+// ===== boot =====
+(function boot(){
+  runParserTests();
+  refreshUV(); buildBoard();
+  refreshLoraUI(); initLoRA();
+})();
+</script>
+</body>
+</html>

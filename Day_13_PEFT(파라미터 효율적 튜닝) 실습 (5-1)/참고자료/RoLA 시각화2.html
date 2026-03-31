@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LoRA 외적 시각화 — rank=8, α/r 스케일 누적 (벡터표기+단계진행)</title>
+  <style>
+    :root{ --cell: 28px; --gap: 6px; }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#f8fafc;color:#0f172a;margin:18px}
+    .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px}
+    .title{font-weight:700;margin:0 0 6px}
+    .btn{border:1px solid #e2e8f0;background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #e2e8f0;background:#f8fafc;font-size:11px}
+    .muted{color:#64748b}
+
+    /* matrix board */
+    .board{display:grid;gap:var(--gap)}
+    .mat{display:grid;gap:2px}
+    .cell{width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;font-variant-numeric:tabular-nums;background:#fff}
+    .hdr{background:#f1f5f9;font-weight:600}
+    .focus{outline:2px solid #2563eb; box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+    .mini{font-size:10px;color:#334155}
+    h2{margin:6px 0 8px;font-size:15px}
+  </style>
+</head>
+<body>
+  <h1 class="title">LoRA 외적 누적 시각화 (rank=8)</h1>
+  <p class="muted">각 k에 대해 <span class="pill">u<sub>k</sub> (세로)</span> 와 <span class="pill">v<sub>k</sub><sup>T</sup> (가로)</span>를 나란히 배치하여 외적 <span class="mono">u<sub>k</sub>v<sub>k</sub><sup>T</sup></span>를 만듭니다. 모든 k(=8)를 <span class="mono">(α/r)</span>로 스케일해 더하면 누적 결과 <span class="mono">ΔW</span>가 됩니다.</p>
+
+  <!-- Controls -->
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <button id="step" class="btn">⏭ 다음 셀</button>
+        <button id="play" class="btn">▶</button>
+        <button id="pause" class="btn">⏸</button>
+        <button id="reset" class="btn">↺ 초기화</button>
+      </div>
+      <div class="mono">진행: <span id="prog" class="pill">i=0, j=0</span> · 스케일 <span class="pill">α/r = 16/8 = 2</span></div>
+    </div>
+  </div>
+
+  <!-- 8 outer-product boards -->
+  <div id="boards" class="row"></div>
+
+  <!-- Accumulated result -->
+  <div class="card">
+    <h2>누적 결과 ΔW = Σ<sub>k=1..8</sub> (u<sub>k</sub> v<sub>k</sub><sup>T</sup>) · (α/r)</h2>
+    <div id="sumBoard"></div>
+    <div class="muted" style="margin-top:6px">각 셀 (i,j)는 매 단계에 모든 k의 <span class="mono">(α/r)·u<sub>k</sub>[i]·v<sub>k</sub>[j]</span> 가 더해져 누적됩니다.</div>
+  </div>
+
+<script>
+// Parameters
+const r = 8, alpha = 16, dOut = 4, dIn = 5; // 기본 요청대로 r=8, α=16
+const scale = alpha / r; // 2
+
+// Utils
+function randn(){ const u=1-Math.random(), v=1-Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function randVec(n, s=0.6){ const a=[]; for(let i=0;i<n;i++) a.push(Math.round(randn()*s*100)/100); return a; }
+function zeros(n){ const a=[]; for(let i=0;i<n;i++) a.push(0); return a; }
+function outer(u,v){ const R=u.length, C=v.length, W=[]; for(let i=0;i<R;i++){ const row=[]; for(let j=0;j<C;j++) row.push(u[i]*v[j]); W.push(row);} return W; }
+function addMat(A,B){ return A.map((row,i)=>row.map((x,j)=>x+B[i][j])); }
+
+// Data: 8 pairs
+const pairs = [];
+for(let k=0;k<r;k++){
+  const u = randVec(dOut);
+  const v = randVec(dIn);
+  pairs.push({u, v});
+}
+
+// Build 8 boards with vector headers and blank matrix
+const boardsEl = document.getElementById('boards');
+function makeBoard(k,u,v){
+  const wrap = document.createElement('div');
+  wrap.className = 'card';
+  wrap.style.flex = '1 1 320px';
+  const title = document.createElement('h2'); title.textContent = `k=${k+1}`; wrap.appendChild(title);
+
+  const board = document.createElement('div'); board.className='board';
+  // Top: v row (header row)
+  const top = document.createElement('div'); top.className='mat'; top.style.gridTemplateColumns = `auto repeat(${dIn}, var(--cell))`;
+  const corner = document.createElement('div'); corner.className='cell hdr'; corner.textContent=''; top.appendChild(corner);
+  for(let j=0;j<dIn;j++){ const c=document.createElement('div'); c.className='cell hdr'; c.id=`k${k}_v_${j}`; c.textContent=v[j].toFixed(2); top.appendChild(c); }
+  board.appendChild(top);
+
+  // Body: u column (header col) + matrix cells
+  const body = document.createElement('div'); body.className='mat'; body.style.gridTemplateColumns = `auto repeat(${dIn}, var(--cell))`;
+  for(let i=0;i<dOut;i++){
+    const uh=document.createElement('div'); uh.className='cell hdr'; uh.id=`k${k}_u_${i}`; uh.textContent=u[i].toFixed(2); body.appendChild(uh);
+    for(let j=0;j<dIn;j++){
+      const c=document.createElement('div'); c.className='cell'; c.id=`k${k}_w_${i}_${j}`; c.innerHTML = '<span class="mini">u[i]×v[j]</span>';
+      body.appendChild(c);
+    }
+  }
+  board.appendChild(body);
+  wrap.appendChild(board);
+  return wrap;
+}
+
+for(let k=0;k<r;k++){
+  boardsEl.appendChild(makeBoard(k, pairs[k].u, pairs[k].v));
+}
+
+// Accumulator board (ΔW)
+const sumEl = document.getElementById('sumBoard');
+function buildSum(){
+  const m = document.createElement('div'); m.className='mat'; m.style.gridTemplateColumns = `repeat(${dIn}, var(--cell))`;
+  for(let i=0;i<dOut;i++) for(let j=0;j<dIn;j++){
+    const c=document.createElement('div'); c.className='cell'; c.id=`sum_${i}_${j}`; c.textContent='0.00'; m.appendChild(c);
+  }
+  sumEl.innerHTML=''; sumEl.appendChild(m);
+}
+buildSum();
+
+// Step engine: fill cell (i,j) across all k, and add to ΔW
+let iIdx = 0, jIdx = 0, timer = null, speed = 320;
+function clearHighlights(){
+  document.querySelectorAll('.focus').forEach(el=>el.classList.remove('focus'));
+}
+function stepOnce(){
+  if(iIdx>=dOut){ return; }
+  clearHighlights();
+  let increment = 0;
+  for(let k=0;k<r;k++){
+    const u = pairs[k].u[iIdx];
+    const v = pairs[k].v[jIdx];
+    const val = u * v; // outer product raw
+    const cell = document.getElementById(`k${k}_w_${iIdx}_${jIdx}`);
+    if(cell){ cell.textContent = val.toFixed(2); cell.classList.add('focus'); }
+    // highlight headers
+    const hu = document.getElementById(`k${k}_u_${iIdx}`); if(hu) hu.classList.add('focus');
+    const hv = document.getElementById(`k${k}_v_${jIdx}`); if(hv) hv.classList.add('focus');
+    // scaled contribution to ΔW
+    increment += scale * val;
+  }
+  // update ΔW
+  const sumCell = document.getElementById(`sum_${iIdx}_${jIdx}`);
+  const prev = parseFloat(sumCell.textContent) || 0;
+  const next = prev + increment;
+  sumCell.textContent = next.toFixed(2);
+  sumCell.classList.add('focus');
+  document.getElementById('prog').textContent = `i=${iIdx}, j=${jIdx}`;
+  // advance indices
+  jIdx++;
+  if(jIdx>=dIn){ jIdx=0; iIdx++; }
+}
+function play(){ if(timer) clearInterval(timer); timer = setInterval(()=>{ stepOnce(); if(iIdx>=dOut){ pause(); } }, speed); }
+function pause(){ if(timer){ clearInterval(timer); timer=null; } }
+function reset(){ pause(); iIdx=0; jIdx=0; // reset all cells and ΔW
+  for(let k=0;k<r;k++){
+    for(let i=0;i<dOut;i++) for(let j=0;j<dIn;j++){
+      const cell = document.getElementById(`k${k}_w_${i}_${j}`);
+      if(cell) cell.innerHTML = '<span class="mini">u[i]×v[j]</span>';
+    }
+  }
+  buildSum(); clearHighlights(); document.getElementById('prog').textContent='i=0, j=0';
+}
+
+// Bind controls
+ document.getElementById('step').addEventListener('click', stepOnce);
+ document.getElementById('play').addEventListener('click', play);
+ document.getElementById('pause').addEventListener('click', pause);
+ document.getElementById('reset').addEventListener('click', reset);
+</script>
+</body>
+</html>
